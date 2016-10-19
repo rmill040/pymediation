@@ -3,11 +3,22 @@ from __future__ import division, print_function
 import numpy as np
 from patsy import dmatrices
 import pandas as pd
+import statsmodels.api as sm
 
 
 class MediationModel(object):
-    """ Estimates an unconditional indirect effect based on the simple mediation model: m = 1 + x
-                                                                                        y = 1 + x + m
+    """ Estimates an unconditional indirect effect based on a simple mediation model:
+
+                                                  M
+                                             (a) / \ (b)
+                                                /   \   
+                                               X ---- Y
+                                                 (c)
+                Models
+                ------
+                1. Mediator:   M ~ 1 + a*X
+                2. Endogenous: Y ~ 1 + c*X + b*M
+                Indirect effect: a*b
     
     Parameters
     ----------
@@ -50,7 +61,8 @@ class MediationModel(object):
         Instance of MediationModel class
     """
     def __init__(self, method = None, mediator_type = None, endogenous_type = None, b1 = None, 
-                 b2 = None, estimator = None, alpha = .05, fit_intercept = True, save_boot_estimates = False):
+                 b2 = None, estimator = None, alpha = .05, fit_intercept = True, save_boot_estimates = False,
+                 estimate_all_paths = False):
 
         # Define global variables
         if method not in ['delta-1', 'delta-2', 'boot-perc', 'boot-bc', 'bayes-credible', 'bayes-hdi']:
@@ -77,6 +89,11 @@ class MediationModel(object):
             self.fit_intercept = fit_intercept
         else:
             raise ValueError('fit_intercept should be a boolean argument')
+
+        if estimate_all_paths == True or estimate_all_paths == False:
+            self.estimate_all_paths = estimate_all_paths
+        else:
+            raise ValueError('estimate_all_paths should be a boolean argument')
 
         # Global variables to control bootstrap functionality
         if self.method in ['boot-perc', 'boot-bc', 'bayes-credible', 'bayes-hdi']:
@@ -323,7 +340,7 @@ class MediationModel(object):
         return ll, ul
     
 
-    def _bayes_hdi_interval(self, estimates = None):
+    def _bayes_hdi_interval(self, boot_estimates = None):
         """Get highest density intervals
 
         Parameters
@@ -339,7 +356,7 @@ class MediationModel(object):
         ul : float
             Upper limit HDI interval estimate
         """
-        sorted_points = sorted(estimates)
+        sorted_points = sorted(boot_estimates)
         ci_idx = np.ceil((1 - self.alpha) * len(sorted_points)).astype('int')
         n_cis = len(sorted_points) - ci_idx
         ci_width = [0]*n_cis
@@ -348,11 +365,16 @@ class MediationModel(object):
             ll = sorted_points[ci_width.index(min(ci_width))]
             ul = sorted_points[ci_width.index(min(ci_width)) + ci_idx]
         return ll, ul
-      
+
+    def _estimate_paths(self):
+
+        
+
+
 
     # ..main functions that are callable
-    def estimate(self, formula = None, data = None):
-        """Estimate indirect effect using specified method
+    def fit(self, formula = None, data = None):
+        """Fit model and estimate indirect effect
 
         Parameters
         ----------
@@ -375,16 +397,66 @@ class MediationModel(object):
             raise ValueError('data needs to be a pandas dataframe, current data structure is %s' % type(data))
 
         # Mediator model
-        m, design_m = dmatrices(formula[0])
+        self.m, self.design_m = dmatrices(formula[0])
 
         # Endogenous model
-        y, design_y = dmatrices(formula[1])
+        self.y, self.design_y = dmatrices(formula[1])
 
         # If no intercept, then drop from both design matrices
         if self.fit_intercept == False:
-            design_m = np.delete(design_m, [0], axis = 1)
-            design_y = np.delete(design_y, [0], axis = 1)
- 
+            self.design_m = np.delete(design_m, [0], axis = 1)
+            self.design_y = np.delete(design_y, [0], axis = 1)
+
+        # Overall model estimates
+        if self.estimate_all_paths:
+
+            self.all_paths = {}
+
+            # Estimate mediator model
+            if self.mediator_type == 'continuous':
+                clf_mediator = sm.GLM(self.m, self.design_m, family = sm.Gaussian())
+            else:
+                clf_mediator = sm.GLM(self.m, self.design_m, family = sm.Binomial())
+            results_mediator = clf_mediator.fit()
+
+            # Get coefficients
+            coefs_mediator = results_mediator.params()
+            self.all_paths['a0'] = coefs_mediator[0]
+            self.all_paths['a'] = coefs_mediator[1]
+
+            # Get standard errors
+            self.all_paths['se_a0'] = np.sqrt(results_mediator().iloc[0, 0])
+            self.all_paths['se_a'] = np.sqrt(results_mediator().iloc[1, 1])
+
+            # Get confidence intervals
+            self.all_paths['ci_a0'] = results_mediator.conf_int().values[0, :]
+            self.all_paths['ci_a'] = results_mediator.conf_int().values[1, :]
+
+            # Estimate endogenous model
+            if self.endogenous_type == 'continuous':
+                clf_endogenous = sm.GLM(y, design_y, family = sm.families.Gaussian())
+            else:
+                clf_endogenous = sm.GLM(y, design_y, family = sm.families.Binomial())
+            results_endogenous = clf_endogenous.fit()
+
+            # Get coefficients
+            coefs_endogenous = results_endogenous.params()
+            self.all_paths['b0'] = coefs_endogenous[0]
+            self.all_paths['c'] = coefs_endogenous[1]
+            self.all_paths['b'] = coefs_endogenous[2]
+
+            # Get standard errors
+            self.all_paths['se_b0'] = np.sqrt(results_endogenous().iloc[0, 0])
+            self.all_paths['se_c'] = np.sqrt(results_endogenous().iloc[1, 1])
+            self.all_paths['se_b'] = np.sqrt(results_endogenous().iloc[2, 2])
+
+            # Get confidence intervals
+            ci_b0 = results_endogenous.conf_int().values[0, :]
+            self.all_paths['ci_c'] = results_endogenous.conf_int().values[1, :]
+            self.all_paths['ci_b'] = results_endogenous.conf_int().values[2, :]
+
+
+        # Estimate indirect effect 
         if self.method in ['delta-1', 'delta-2']:
             return self._delta_method(m = m, design_m = design_m, y = y, design_y = design_y)
         else:
