@@ -602,8 +602,11 @@ class MediationModel(object):
         -------
         None 
         """
+        # Error checking
         assert(self.fit_ran == True), 'Need to run .fit() method before printing summary'
         assert(self.estimate_all_paths == True), 'Need to specify True for estimate_all_paths to get summary'
+
+        # Define method strings
         if self.method == 'delta-1':
             str_method = 'Taylor Series Approximation'
             str_ci = 'First-Order Multivariate Delta'
@@ -623,6 +626,7 @@ class MediationModel(object):
             str_method = 'Bayesian Bootstrap'
             str_ci = 'Highest Density'
 
+        # Define models
         if self.mediator_type == 'continuous':
             med_model = 'Linear Regression'
         else:
@@ -633,15 +637,15 @@ class MediationModel(object):
         else:
             endog_model = 'Logistic Regression'
 
-
+        # Overall summary
         print('{:-^40}'.format(''))
         print('{:^40}'.format('MEDIATION MODEL SUMMARY'))
         print('{:-^40}\n'.format(''))
-        if exog_name is not None and med_name is not None and endog_name is not None:
 
-            print('Exogenous: %s | Aliased as %s' % (exog_name, '{:.3}'.format(exog_name)))
-            print('Mediator: %s | Aliased as %s' % (med_name, '{:.3}'.format(med_name)))
-            print('Endogenous: %s | Aliased as %s' % (endog_name, '{:.3}'.format(endog_name)))
+        if exog_name is not None and med_name is not None and endog_name is not None:
+            print('{0:<20}{1:<14}{2:<10}'.format('Exogenous:', exog_name, '-->  ' + exog_name[:3]))
+            print('{0:<20}{1:<14}{2:<10}'.format('Mediator:', med_name, '-->  ' + med_name[:3]))
+            print('{0:<20}{1:<14}{2:<10}'.format('Endogenous:', endog_name, '-->  ' + endog_name[:3]))
 
             # Truncate names
             exog_name = '{:.3}'.format(exog_name)
@@ -652,24 +656,26 @@ class MediationModel(object):
             exog_name = 'X'
             med_name = 'M'
             endog_name = 'Y'
-            print('Exogenous: %s' % exog_name)
-            print('Mediator: %s' % med_name)
-            print('Endogenous: %s' % endog_name)
+            print('{0:<20}{1:<14}'.format('Exogenous:', exog_name))
+            print('{0:<20}{1:<14}'.format('Mediator:', exog_name))
+            print('{0:<20}{1:<14}'.format('Endogenous:', exog_name))
 
-        print('\nMediator Model: %s' % med_model)
-        print('Endogenous Model: %s' % endog_model)
+        print('\n{0:<20}{1:<14}'.format('Mediator Model:', med_model))
+        print('{0:<20}{1:<14}'.format('Endogenous Model:', endog_model))
 
-        print('\nSample size: %d' % self.n)
-        print('Alpha: %.2f' % self.alpha)
+        print('\n{0:<20}{1:<14}'.format('Sample Size:', self.n))
+        print('{0:<20}{1:<14}'.format('Alpha:', self.alpha))
 
-        print('\nMethod: %s' % str_method)
-        print('Interval: %s' % str_ci)
+        print('\n{0:<20}{1:<14}'.format('Method:', str_method))
+        print('{0:<20}{1:<14}'.format('Interval:', str_ci))
+
         if self.method in ['boot-perc', 'boot-bc', 'bayes-cred', 'bayes-hdi']:
-            print('\tBootstrap samples: %d' % self.b1)
+            print('{0:<20}{1:<3}'.format('Boot Samples:', self.b1))
             if self.method in ['bayes-cred', 'bayes-hdi']:
-                print('\tResample size: %d' % self.b2)
-                print('\tPosterior estimator: %s' % self.estimator)
+                print('{0:<20}{1:<3}'.format('Resample Size:', self.b2))
+                print('{0:<20}{1:<10}'.format('Estimator:', self.estimator))
 
+        # Parameter estimates summary
         print('\n{:-^71}'.format(''))
         print('{:^95}'.format(str(int((1-self.alpha)*100)) + '% Intervals'))
         print('{:^96}'.format('-----------------'))
@@ -687,44 +693,44 @@ class MediationModel(object):
         else:
             sig = 'No'
         print('{path:<12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = ' %s -> %s' % (exog_name, med_name),
-                                                                                coef = 'a',
-                                                                                point = self.all_paths['a'],
-                                                                                ll = self.all_paths['ci_a'][0],
-                                                                                ul = self.all_paths['ci_a'][1],
-                                                                                sig = sig))
+                                                                                         coef = 'a',
+                                                                                         point = self.all_paths['a'],
+                                                                                         ll = self.all_paths['ci_a'][0],
+                                                                                         ul = self.all_paths['ci_a'][1],
+                                                                                         sig = sig))
         # b effect
         if np.sign(self.all_paths['ci_b'][0]) == np.sign(self.all_paths['ci_b'][1]):
             sig = 'Yes'
         else:
             sig = 'No'
         print('{path:<12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = ' %s -> %s' % (med_name, endog_name),
-                                                                                coef = 'b',
-                                                                                point = self.all_paths['b'],
-                                                                                ll = self.all_paths['ci_b'][0],
-                                                                                ul = self.all_paths['ci_b'][1],
-                                                                                sig = sig))
+                                                                                         coef = 'b',
+                                                                                         point = self.all_paths['b'],
+                                                                                         ll = self.all_paths['ci_b'][0],
+                                                                                         ul = self.all_paths['ci_b'][1],
+                                                                                         sig = sig))
         # c effect
         if np.sign(self.all_paths['ci_c'][0]) == np.sign(self.all_paths['ci_c'][1]):
             sig = 'Yes'
         else:
             sig = 'No'
         print('{path:<12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = ' %s -> %s' % (exog_name, endog_name),
-                                                                                coef = 'c',
-                                                                                point = self.all_paths['c'],
-                                                                                ll = self.all_paths['ci_c'][0],
-                                                                                ul = self.all_paths['ci_c'][1],
-                                                                                sig = sig))
+                                                                                         coef = 'c',
+                                                                                         point = self.all_paths['c'],
+                                                                                         ll = self.all_paths['ci_c'][0],
+                                                                                         ul = self.all_paths['ci_c'][1],
+                                                                                         sig = sig))
         # indirect effect
         if np.sign(self.indirect['ci'].ravel()[0]) == np.sign(self.indirect['ci'].ravel()[1]):
             sig = 'Yes'
         else:
             sig = 'No'
         print('\n{path:^12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = 'Indirect',
-                                                                                coef = 'a*b',
-                                                                                point = self.indirect['point'],
-                                                                                ll = self.indirect['ci'].ravel()[0],
-                                                                                ul = self.indirect['ci'].ravel()[1],
-                                                                                sig = sig))
+                                                                                           coef = 'a*b',
+                                                                                           point = self.indirect['point'],
+                                                                                           ll = self.indirect['ci'].ravel()[0],
+                                                                                           ul = self.indirect['ci'].ravel()[1],
+                                                                                           sig = sig))
         print('{:-^71}'.format(''))
 
 if __name__ == "__main__":
