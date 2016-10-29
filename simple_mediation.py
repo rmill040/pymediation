@@ -32,7 +32,7 @@ class MediationModel(object):
                                     delta-2 (second-order delta method)
                                     boot-perc (nonparametric bootstrap with percentile CIs)
                                     boot-bc (nonparametric bootstrap with bias-corrected CIs)
-                                    bayes-credible (Bayesian bootstrap with credible intervals)
+                                    bayes-cred (Bayesian bootstrap with credible intervals)
                                     bayes-hdi (Bayesian bootstrap with highest density intervals)
 
     mediator_type : string
@@ -69,7 +69,7 @@ class MediationModel(object):
                  estimate_all_paths = False):
 
         # Define global variables
-        if method not in ['delta-1', 'delta-2', 'boot-perc', 'boot-bc', 'bayes-credible', 'bayes-hdi']:
+        if method not in ['delta-1', 'delta-2', 'boot-perc', 'boot-bc', 'bayes-cred', 'bayes-hdi']:
             raise ValueError('%s not a valid method')
         else:
             self.method = method
@@ -100,7 +100,7 @@ class MediationModel(object):
             raise ValueError('estimate_all_paths should be a boolean argument')
 
         # Global variables to control bootstrap functionality
-        if self.method in ['boot-perc', 'boot-bc', 'bayes-credible', 'bayes-hdi']:
+        if self.method in ['boot-perc', 'boot-bc', 'bayes-cred', 'bayes-hdi']:
             if estimator not in ['sample', 'mean', 'median', 'mode']:
                 raise ValueError('%s is not a valid estimator' % estimator)
             else:
@@ -114,7 +114,7 @@ class MediationModel(object):
             assert(isinstance(b1, int) == True), 'b1 should be an interger argument'
             self.b1 = b1
 
-            if self.method in ['bayes-credible', 'bayes-hdi']:
+            if self.method in ['bayes-cred', 'bayes-hdi']:
                 assert(isinstance(b2, int) == True), 'b2 should be an integer argument'
                 self.b2 = b2
             self.fit_ran = False
@@ -325,7 +325,7 @@ class MediationModel(object):
         CI : 1d array-like
             Lower limit and upper limit interval estimates
         """
-        if self.method in ['boot-perc', 'bayes-credible']:
+        if self.method in ['boot-perc', 'bayes-cred']:
             return self._percentile_interval(boot_estimates)
         elif self.method == 'boot-bc':
             return self._bias_corrected_interval(boot_estimates, sample_point = sample_point)
@@ -537,7 +537,9 @@ class MediationModel(object):
         -------
         self : object
             A fitted object of class MediationModel
-        """   
+        """
+        assert(exog.shape[0] == med.shape[0] == endog.shape[0]), "All variables should have same shape for first dimension"
+        
         # Create pandas dataframe of data
         combined = np.hstack((exog.reshape(-1, 1), med.reshape(-1, 1), endog.reshape(-1, 1)))
         data = pd.DataFrame(combined, columns = ['x', 'm', 'y'])
@@ -575,25 +577,32 @@ class MediationModel(object):
         estimates : 1d array-like
             Array with point estimate, lower limit, and upper limit of interval estimate
         """
-        assert(self.fit_ran == True), 'Need to run .fit() method before getting coefficients'
+        assert(self.fit_ran == True), 'Need to run .fit() method before getting indirect effect'
         point = np.array([self.indirect['point']])
         ci = self.indirect['ci'].ravel()
         return np.concatenate((point, ci)).reshape((1, 3))
 
 
-    def summary(self):
+    def summary(self, exog_name = None, med_name = None, endog_name = None):
         """Print summary of parameter estimates
 
         Parameters
         ----------
-        None
+        exog_name : str
+            Name of exogenous variable
+
+        med_name : str
+            Name of mediator variable
+
+        endog_name : str
+            Name of endogenous variable
 
         Returns
         -------
-        None
+        None 
         """
-        pass
-        """
+        assert(self.fit_ran == True), 'Need to run .fit() method before printing summary'
+        assert(self.estimate_all_paths == True), 'Need to specify True for estimate_all_paths to get summary'
         if self.method == 'delta-1':
             str_method = 'Taylor Series Approximation'
             str_ci = 'First-Order Multivariate Delta'
@@ -606,30 +615,116 @@ class MediationModel(object):
         elif self.method == 'boot-bc':
             str_method = 'Nonparametric Bootstrap'
             str_ci = 'Bias-Corrected'
-        elif self.method == 'bayes-credible':
+        elif self.method == 'bayes-cred':
             str_method = 'Bayesian Bootstrap'
             str_ci = 'Credible'
         else:
             str_method = 'Bayesian Bootstrap'
             str_ci = 'Highest Density'
 
-        print('\n------- SUMMARY OF MEDIATION MODEL -------\n')
-        print('Mediator: %s\n' % self.mediator_type)
-        print('Endogenous: %s\n' % self.endogenous_type)
-        print('Alpha: %.2f\n' % self.alpha)
-        print('Method: %s\n' % str_method)
-        print('\tInterval: %\n' % str_ci)
+        if self.mediator_type == 'continuous':
+            med_model = 'Linear Regression'
+        else:
+            med_model = 'Logistic Regression'
 
-        print('\n** Mediator Model **\n')
-        print('\n** Endogenous Model **\n')
-        """
+        if self.endogenous_type == 'continuous':
+            endog_model = 'Linear Regression'
+        else:
+            endog_model = 'Logistic Regression'
+
+
+        print('{:-^40}'.format(''))
+        print('{:^40}'.format('MEDIATION MODEL SUMMARY'))
+        print('{:-^40}\n'.format(''))
+        if exog_name is not None and med_name is not None and endog_name is not None:
+
+            print('Exogenous: %s | Aliased as %s' % (exog_name, '{:.3}'.format(exog_name)))
+            print('Mediator: %s | Aliased as %s' % (med_name, '{:.3}'.format(med_name)))
+            print('Endogenous: %s | Aliased as %s' % (endog_name, '{:.3}'.format(endog_name)))
+
+            # Truncate names
+            exog_name = '{:.3}'.format(exog_name)
+            med_name = '{:.3}'.format(med_name)
+            endog_name = '{:.3}'.format(endog_name)
+
+        else:
+            exog_name = 'X'
+            med_name = 'M'
+            endog_name = 'Y'
+            print('Exogenous: %s' % exog_name)
+            print('Mediator: %s' % med_name)
+            print('Endogenous: %s' % endog_name)
+
+        print('\nMediator Model: %s' % med_model)
+        print('Endogenous Model: %s' % endog_model)
+
+        print('\nAlpha: %.2f' % self.alpha)
+        print('Method: %s' % str_method)
+        print('Interval: %s' % str_ci)
+
+        print('\n{:-^71}'.format(''))
+        print('{:^95}'.format(str(int((1-self.alpha)*100)) + '% Intervals'))
+        print('{:^96}'.format('-----------------'))
+        print('{path:<12}{coef:^12}{point:^12}{ll:^12}{ul:^12}{sig:^12}'.format(path = '  Path',
+                                                                                coef = 'Coef',
+                                                                                point = 'Point',
+                                                                                ll = 'LL',
+                                                                                ul = 'UL',
+                                                                                sig = 'Sig'))
+        print('{:-^71}'.format(''))
+
+        # a effect
+        if np.sign(self.all_paths['ci_a'][0]) == np.sign(self.all_paths['ci_a'][1]):
+            sig = 'Yes'
+        else:
+            sig = 'No'
+        print('{path:<12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = ' %s -> %s' % (exog_name, med_name),
+                                                                                coef = 'a',
+                                                                                point = self.all_paths['a'],
+                                                                                ll = self.all_paths['ci_a'][0],
+                                                                                ul = self.all_paths['ci_a'][1],
+                                                                                sig = sig))
+        # b effect
+        if np.sign(self.all_paths['ci_b'][0]) == np.sign(self.all_paths['ci_b'][1]):
+            sig = 'Yes'
+        else:
+            sig = 'No'
+        print('{path:<12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = ' %s -> %s' % (med_name, endog_name),
+                                                                                coef = 'b',
+                                                                                point = self.all_paths['b'],
+                                                                                ll = self.all_paths['ci_b'][0],
+                                                                                ul = self.all_paths['ci_b'][1],
+                                                                                sig = sig))
+        # c effect
+        if np.sign(self.all_paths['ci_c'][0]) == np.sign(self.all_paths['ci_c'][1]):
+            sig = 'Yes'
+        else:
+            sig = 'No'
+        print('{path:<12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = ' %s -> %s' % (exog_name, endog_name),
+                                                                                coef = 'c',
+                                                                                point = self.all_paths['c'],
+                                                                                ll = self.all_paths['ci_c'][0],
+                                                                                ul = self.all_paths['ci_c'][1],
+                                                                                sig = sig))
+        # indirect effect
+        if np.sign(self.indirect['ci'].ravel()[0]) == np.sign(self.indirect['ci'].ravel()[1]):
+            sig = 'Yes'
+        else:
+            sig = 'No'
+        print('\n{path:<12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = 'Indirect',
+                                                                                coef = 'a*b',
+                                                                                point = self.indirect['point'],
+                                                                                ll = self.indirect['ci'].ravel()[0],
+                                                                                ul = self.indirect['ci'].ravel()[1],
+                                                                                sig = sig))
+        print('{:-^71}'.format(''))
 
 if __name__ == "__main__":
     x = np.random.normal(0, 1, (100, 1))
     m = .4*x + np.random.normal(0, 1, (100, 1))
     y = .4*m + np.random.normal(0, 1, (100, 1))
-    clf = MediationModel(method = 'boot-bc', b1 = 1000, b2 = 100, mediator_type = 'continuous', endogenous_type = 'continuous',
-                         estimate_all_paths = False)
+    clf = MediationModel(method = 'boot-bc', b1 = 1000, b2 = 100, mediator_type = 'continuous', 
+                         endogenous_type = 'continuous', estimate_all_paths = False)
 
     clf.fit(exog = x, med = m, endog = y)
-    print(clf.indirect_effect())
+    clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
