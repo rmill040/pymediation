@@ -638,9 +638,9 @@ class MediationModel(object):
             endog_model = 'Logistic Regression'
 
         # Overall summary
-        print('{:-^40}'.format(''))
-        print('{:^40}'.format('MEDIATION MODEL SUMMARY'))
-        print('{:-^40}\n'.format(''))
+        print('{:-^71}'.format(''))
+        print('{:^71}'.format('MEDIATION MODEL SUMMARY'))
+        print('{:-^71}\n'.format(''))
 
         if exog_name is not None and med_name is not None and endog_name is not None:
             print('{0:<20}{1:<14}{2:<10}'.format('Exogenous:', exog_name, '-->  ' + exog_name[:3]))
