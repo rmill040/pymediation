@@ -105,13 +105,20 @@ class MediationModel(object):
                 raise ValueError('%s is not a valid estimator' % estimator)
             else:
                 self.estimator = estimator
+
             if save_boot_estimates == True or save_boot_estimates == False:
                 self.save_boot_estimates = save_boot_estimates
             else:
                 raise ValueError('save_boot_estimates should be a boolean argument')
+
+            assert(isinstance(b1, int) == True), 'b1 should be an interger argument'
             self.b1 = b1
-            self.b2 = b2
+
+            if self.method in ['bayes-credible', 'bayes-hdi']:
+                assert(isinstance(b2, int) == True), 'b2 should be an integer argument'
+                self.b2 = b2
             self.fit_ran = False
+
 
     # ..helper functions (all start with underscore _)
     def _bayes_probs(self, n = None):
@@ -292,11 +299,11 @@ class MediationModel(object):
 
         # Get posterior point estimate based on estimator 
         if self.estimator == 'mean':
-            return np.mean(boot_estimates, axis = 0)
+            return np.mean(boot_estimates)
         elif self.estimator == 'median':
-            return np.median(boot_estimates, axis = 0)
+            return np.median(boot_estimates)
         elif self.estimator == 'mode':
-            return scipy.stats.mode(boot_estimates, axis = 0)[0]
+            return scipy.stats.mode(boot_estimates)[0]
         else: 
             return self._point_estimate(m = m, design_m = design_m, y = y, design_y = design_y)
        
@@ -324,6 +331,7 @@ class MediationModel(object):
             return self._bias_corrected_interval(boot_estimates, sample_point = sample_point)
         else: 
             return self._hdi_interval(boot_estimates)
+
 
     def _percentile_interval(self, boot_estimates = None):
         """Get (1-alpha)*100 percentile (nonparametric) or credible (Bayesian) interval estimate
@@ -439,7 +447,6 @@ class MediationModel(object):
         indirect['point'] = self._boot_point(m = m, design_m = design_m, y = y, 
                                              design_y = design_y, boot_estimates = boot_estimates)
         indirect['ci'] = self._boot_interval(boot_estimates = boot_estimates, sample_point = indirect['point'])
-
         return indirect
 
 
@@ -512,30 +519,32 @@ class MediationModel(object):
 
 
     # ..main functions that are callable
-    def fit(self, formula = None, data = None):
+    def fit(self, exog = None, med = None, endog = None):
         """Fit model and estimate indirect effect
 
         Parameters
         ----------
-        formula : str
-            String that contains equations similar to R's lm() function or Python's statsmodel package.
-            Requires two equations separated by semi-colon, where first equation is for mediator model, 
-            second equation is for endogenous model
+        exog : 1d array-like
+            Exogenous variable
+
+        med :1d array-like
+            Mediator variable
+
+        endog : 1d array-like
+            Endogenous variable
 
         Returns
         -------
         self : object
             A fitted object of class MediationModel
         """   
-        # Error checking
-        formula = formula.split(';')
-        assert(len(formula) == 2), 'Need to provide two equations separated with semi-colon'
-        if isinstance(data, pd.DataFrame) == False:
-            raise ValueError('data needs to be a pandas dataframe, current data structure is %s' % type(data))
+        # Create pandas dataframe of data
+        combined = np.hstack((exog.reshape(-1, 1), med.reshape(-1, 1), endog.reshape(-1, 1)))
+        data = pd.DataFrame(combined, columns = ['x', 'm', 'y'])
 
         # Define variables
-        m, design_m = dmatrices(formula[0])
-        y, design_y = dmatrices(formula[1])
+        m, design_m = dmatrices('m ~ x', data = data)
+        y, design_y = dmatrices('y ~ x + m', data = data)
 
         # If no intercept, then drop from both design matrices
         if self.fit_intercept == False:
@@ -552,6 +561,7 @@ class MediationModel(object):
         else:
             self.indirect = self._boot_method(m = m, design_m = design_m, y = y, design_y = design_y)
         self.fit_ran = True
+
 
     def indirect_effect(self):
         """Get point estimate and confidence interval for indirect effect based on specified method
@@ -582,18 +592,44 @@ class MediationModel(object):
         -------
         None
         """
-        if self.estimate_all_paths:
-            pass
+        pass
+        """
+        if self.method == 'delta-1':
+            str_method = 'Taylor Series Approximation'
+            str_ci = 'First-Order Multivariate Delta'
+        elif self.method == 'delta-2':
+            str_method = 'Taylor Series Approximation'
+            str_ci = 'Second-Order Multivariate Delta'
+        elif self.method == 'boot-perc':
+            str_method = 'Nonparametric Bootstrap'
+            str_ci = 'Percentile'
+        elif self.method == 'boot-bc':
+            str_method = 'Nonparametric Bootstrap'
+            str_ci = 'Bias-Corrected'
+        elif self.method == 'bayes-credible':
+            str_method = 'Bayesian Bootstrap'
+            str_ci = 'Credible'
         else:
-            pass   
+            str_method = 'Bayesian Bootstrap'
+            str_ci = 'Highest Density'
+
+        print('\n------- SUMMARY OF MEDIATION MODEL -------\n')
+        print('Mediator: %s\n' % self.mediator_type)
+        print('Endogenous: %s\n' % self.endogenous_type)
+        print('Alpha: %.2f\n' % self.alpha)
+        print('Method: %s\n' % str_method)
+        print('\tInterval: %\n' % str_ci)
+
+        print('\n** Mediator Model **\n')
+        print('\n** Endogenous Model **\n')
+        """
 
 if __name__ == "__main__":
     x = np.random.normal(0, 1, (100, 1))
     m = .4*x + np.random.normal(0, 1, (100, 1))
     y = .4*m + np.random.normal(0, 1, (100, 1))
-    data = pd.DataFrame(np.hstack((x, m, y)), columns = ['x', 'm', 'y'])
-    clf = MediationModel(method = 'bayes-hdi', b1 = 100, b2 = 100, mediator_type = 'continuous', endogenous_type = 'continuous',
+    clf = MediationModel(method = 'boot-bc', b1 = 1000, b2 = 100, mediator_type = 'continuous', endogenous_type = 'continuous',
                          estimate_all_paths = False)
 
-    clf.fit('m ~ x; y ~ x + m', data = data)
+    clf.fit(exog = x, med = m, endog = y)
     print(clf.indirect_effect())
