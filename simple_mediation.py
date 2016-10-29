@@ -1,11 +1,11 @@
 from __future__ import division, print_function
 
 import numpy as np
-from patsy import dmatrices
 import pandas as pd
-import statsmodels.api as sm
+from patsy import dmatrices
 import scipy.stats
 from sklearn import linear_model
+import statsmodels.api as sm
 import warnings
 warnings.filterwarnings("ignore")
 
