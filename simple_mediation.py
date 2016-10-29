@@ -555,6 +555,7 @@ class MediationModel(object):
 
         # Estimates all paths if specified
         if self.estimate_all_paths:
+            self.n = m.shape[0]
             self._estimate_paths(m = m, design_m = design_m, y = y, design_y = design_y)
 
         # Estimate indirect effect based on method
@@ -658,14 +659,21 @@ class MediationModel(object):
         print('\nMediator Model: %s' % med_model)
         print('Endogenous Model: %s' % endog_model)
 
-        print('\nAlpha: %.2f' % self.alpha)
-        print('Method: %s' % str_method)
+        print('\nSample size: %d' % self.n)
+        print('Alpha: %.2f' % self.alpha)
+
+        print('\nMethod: %s' % str_method)
         print('Interval: %s' % str_ci)
+        if self.method in ['boot-perc', 'boot-bc', 'bayes-cred', 'bayes-hdi']:
+            print('\tBootstrap samples: %d' % self.b1)
+            if self.method in ['bayes-cred', 'bayes-hdi']:
+                print('\tResample size: %d' % self.b2)
+                print('\tPosterior estimator: %s' % self.estimator)
 
         print('\n{:-^71}'.format(''))
         print('{:^95}'.format(str(int((1-self.alpha)*100)) + '% Intervals'))
         print('{:^96}'.format('-----------------'))
-        print('{path:<12}{coef:^12}{point:^12}{ll:^12}{ul:^12}{sig:^12}'.format(path = '  Path',
+        print('{path:^12}{coef:^12}{point:^12}{ll:^12}{ul:^12}{sig:^12}'.format(path = 'Path',
                                                                                 coef = 'Coef',
                                                                                 point = 'Point',
                                                                                 ll = 'LL',
@@ -711,7 +719,7 @@ class MediationModel(object):
             sig = 'Yes'
         else:
             sig = 'No'
-        print('\n{path:<12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = 'Indirect',
+        print('\n{path:^12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = 'Indirect',
                                                                                 coef = 'a*b',
                                                                                 point = self.indirect['point'],
                                                                                 ll = self.indirect['ci'].ravel()[0],
@@ -723,8 +731,8 @@ if __name__ == "__main__":
     x = np.random.normal(0, 1, (100, 1))
     m = .4*x + np.random.normal(0, 1, (100, 1))
     y = .4*m + np.random.normal(0, 1, (100, 1))
-    clf = MediationModel(method = 'boot-bc', b1 = 1000, b2 = 100, mediator_type = 'continuous', 
-                         endogenous_type = 'continuous', estimate_all_paths = False)
+    clf = MediationModel(method = 'bayes-hdi', b1 = 5000, b2 = 100, mediator_type = 'continuous', 
+                         endogenous_type = 'continuous', estimate_all_paths = True)
 
     clf.fit(exog = x, med = m, endog = y)
     clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
