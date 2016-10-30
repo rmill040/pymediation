@@ -48,7 +48,7 @@ class MediationModel(object):
         Stage two number of samples to draw - corresponds to the size of Bayesian bootstrap samples to draw
 
     estimator : str (for bootstrap), default sample
-        Bootstrap point estimator. Currently supports sample, mean, median, and mode
+        Bootstrap point estimator. Currently supports sample, mean, and median
 
     alpha : float, default .05
         Type I error rate - corresponds to generating (1-alpha)*100 intervals
@@ -101,7 +101,7 @@ class MediationModel(object):
 
         # Global variables to control bootstrap functionality
         if self.method in ['boot-perc', 'boot-bc', 'bayes-cred', 'bayes-hdi']:
-            if estimator not in ['sample', 'mean', 'median', 'mode']:
+            if estimator not in ['sample', 'mean', 'median']:
                 raise ValueError('%s is not a valid estimator' % estimator)
             else:
                 self.estimator = estimator
@@ -348,7 +348,7 @@ class MediationModel(object):
         """
         ll = np.percentile(boot_estimates, q = (self.alpha/2)*100)
         ul = np.percentile(boot_estimates, q = (1 - self.alpha/2)*100)
-        return np.array([ll, ul]).reshape((1, 2))
+        return np.array([ll, ul])
 
 
     def _bias_corrected_interval(self, boot_estimates = None, sample_point = None):
@@ -373,15 +373,18 @@ class MediationModel(object):
         adjusted_ul = scipy.stats.norm.cdf(2*z0 + scipy.stats.norm.ppf(1 - self.alpha/2))*100
         ll = np.percentile(boot_estimates, q = adjusted_ll)
         ul = np.percentile(boot_estimates, q = adjusted_ul)
-        return np.array([ll, ul]).reshape((1, 2))
+        return np.array([ll, ul])
 
 
-    def _hdi_interval(self, boot_estimates = None):
-        """Get (1-alpha)*100 highest density interval estimate
+    """
+    Next two functions taken form the PyMC library https://github.com/pymc-devs/pymc
+    """
+    def _calc_min_interval(self, boot_estimates = None):
+        """Determine the minimum interval of a given width
 
         Parameters
         ----------
-        estimates : numpy array with dimensions = [b1, 1]
+        boot_estimates : SORTED numpy array with dimensions = [b1, 1]
             Array with Bayesian bootstrap estimates for each sample
 
         Returns
@@ -389,15 +392,68 @@ class MediationModel(object):
         CI : 1d array-like
             Lower limit and upper limit for highest density interval estimates
         """
-        sorted_points = sorted(boot_estimates)
-        ci_idx = np.ceil((1 - self.alpha) * len(sorted_points)).astype('int')
-        n_cis = len(sorted_points) - ci_idx
-        ci_width = [0]*n_cis
-        for i in xrange(n_cis):
-            ci_width[i] = sorted_points[i + ci_idx] - sorted_points[i]
-            ll = sorted_points[ci_width.index(min(ci_width))]
-            ul = sorted_points[ci_width.index(min(ci_width)) + ci_idx]
-        return np.array([ll, ul]).reshape((1, 2))
+        n = len(boot_estimates)
+        cred_mass = 1.0 - self.alpha
+
+        interval_idx_inc = int(np.floor(cred_mass*n))
+        n_intervals = n - interval_idx_inc
+        interval_width = boot_estimates[interval_idx_inc:] - boot_estimates[:n_intervals]
+
+        if len(interval_width) == 0:
+            raise ValueError('Too few elements for interval calculation')
+
+        min_idx = np.argmin(interval_width)
+        hdi_min = boot_estimates[min_idx]
+        hdi_max = boot_estimates[min_idx+interval_idx_inc]
+        return np.array([hdi_min, hdi_max])
+
+
+    def _hdi_interval(self, boot_estimates = None):
+        """Get (1-alpha)*100 highest posterior density estimates
+
+        Parameters
+        ----------
+        boot_estimates : numpy array with dimensions = [b1, 1]
+            Array with Bayesian bootstrap estimates for each sample
+
+        Returns
+        -------
+        CI : 1d array-like
+            Lower limit and upper limit for highest density interval estimates
+        """
+
+        # Make a copy of trace
+        boot_estimates = boot_estimates.copy()
+
+        # For multivariate node
+        if boot_estimates.ndim > 1:
+
+            # Transpose first, then sort
+            tx = np.transpose(boot_estimates, list(range(boot_estimates.ndim))[1:]+[0])
+            dims = np.shape(tx)
+
+            # Container list for intervals
+            intervals = np.resize(0.0, dims[:-1]+(2,))
+
+            for index in make_indices(dims[:-1]):
+                try:
+                    index = tuple(index)
+                except TypeError:
+                    pass
+
+                # Sort trace
+                sx = np.sort(tx[index])
+
+                # Append to list
+                intervals[index] = self._calc_min_interval(sx)
+
+            # Transpose back before returning
+            return np.array(intervals)
+
+        else:
+            # Sort univariate node
+            sx = np.sort(boot_estimates)
+            return np.array(self._calc_min_interval(sx))
 
 
     def _boot_method(self, m = None, design_m = None, y = None, design_y = None):
@@ -579,9 +635,9 @@ class MediationModel(object):
             Array with point estimate, lower limit, and upper limit of interval estimate
         """
         assert(self.fit_ran == True), 'Need to run .fit() method before getting indirect effect'
-        point = np.array([self.indirect['point']])
+        point = np.array([self.indirect['point']]).ravel()
         ci = self.indirect['ci'].ravel()
-        return np.concatenate((point, ci)).reshape((1, 3))
+        return np.concatenate((point, ci)).reshape((3,))
 
 
     def summary(self, exog_name = None, med_name = None, endog_name = None):
@@ -728,8 +784,8 @@ class MediationModel(object):
         print('\n{path:^12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = 'Indirect',
                                                                                            coef = 'a*b',
                                                                                            point = self.indirect['point'],
-                                                                                           ll = self.indirect['ci'].ravel()[0],
-                                                                                           ul = self.indirect['ci'].ravel()[1],
+                                                                                           ll = self.indirect['ci'][0],
+                                                                                           ul = self.indirect['ci'][1],
                                                                                            sig = sig))
         print('{:-^71}'.format(''))
 
@@ -737,8 +793,9 @@ if __name__ == "__main__":
     x = np.random.normal(0, 1, (100, 1))
     m = .4*x + np.random.normal(0, 1, (100, 1))
     y = .4*m + np.random.normal(0, 1, (100, 1))
-    clf = MediationModel(method = 'bayes-hdi', b1 = 5000, b2 = 100, mediator_type = 'continuous', 
+    clf = MediationModel(method = 'bayes-hdi', b1 = 1000, b2 = 1000, mediator_type = 'continuous', estimator = 'sample',
                          endogenous_type = 'continuous', estimate_all_paths = True)
 
     clf.fit(exog = x, med = m, endog = y)
-    clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
+    print(clf.indirect_effect())
+    #clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
