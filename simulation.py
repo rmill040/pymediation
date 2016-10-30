@@ -22,7 +22,7 @@ def write_estimates(i = None, N = None, mediator_type = None, endogenous_type = 
 	print(','.join(map(str, tmp)))
 
 # Main simulation function
-def simulation(iterations = None, rank = None):
+def simulation(iterations = None):
 
 	# Start timer and simulation counter
 	local_start = timeit.default_timer()
@@ -157,12 +157,9 @@ def main():
 
 	# Set seed for each cpu
 	np.random.seed(rank*10 + 1)
-
-	# Get arguments from user
-	iterations = int(sys.argv[1])
 	
 	# Run function
-	simulation(iterations = iterations, rank = rank)
+	simulation(iterations = int(sys.argv[1]))
 
 if __name__ == "__main__":
 	time_start = timeit.default_timer()
