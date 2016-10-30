@@ -798,4 +798,4 @@ if __name__ == "__main__":
 
     clf.fit(exog = x, med = m, endog = y)
     print(clf.indirect_effect())
-    #clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
+    clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
