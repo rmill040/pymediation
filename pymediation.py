@@ -1,5 +1,6 @@
 from __future__ import division, print_function
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from patsy import dmatrices
@@ -302,8 +303,6 @@ class MediationModel(object):
             return np.mean(boot_estimates)
         elif self.estimator == 'median':
             return np.median(boot_estimates)
-        elif self.estimator == 'mode':
-            return scipy.stats.mode(boot_estimates)[0]
         else: 
             return self._point_estimate(m = m, design_m = design_m, y = y, design_y = design_y)
        
@@ -377,7 +376,7 @@ class MediationModel(object):
 
 
     """
-    Next two functions taken form the PyMC library https://github.com/pymc-devs/pymc
+    Next two functions taken form the PyMC library https://github.com/pymc-devs/pymc -> utils.py
     """
     def _calc_min_interval(self, boot_estimates = None):
         """Determine the minimum interval of a given width
@@ -680,7 +679,7 @@ class MediationModel(object):
             str_ci = 'Credible'
         else:
             str_method = 'Bayesian Bootstrap'
-            str_ci = 'Highest Density'
+            str_ci = 'Highest Posterior Density'
 
         # Define models
         if self.mediator_type == 'continuous':
@@ -789,13 +788,61 @@ class MediationModel(object):
                                                                                            sig = sig))
         print('{:-^71}'.format(''))
 
+    def plot_indirect(self):
+        """Plot histogram of bootstrap distribution of indirect effect
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        # Error checking
+        assert(self.fit_ran == True), 'Need to run .plot() method before generating histogram'
+        assert(self.save_boot_estimates == True), 'Need to specify True for save_boot_estimates to generate histogram'
+        
+        # Create figure
+        plt.figure()
+        plt.hist(self.indirect['boot_estimates'], bins = 100, color = 'gray')
+        plt.axvline(self.indirect['point'], color = 'blue', label = 'Point', linewidth = 3)
+        plt.axvline(self.indirect['ci'][0], color = 'blue', label = 'Interval', linestyle = 'dashed', linewidth = 3)
+        plt.axvline(self.indirect['ci'][1], color = 'blue', linestyle = 'dashed', linewidth = 3)
+        
+        # Check method for title of histogram
+        if self.method == 'boot-perc':
+            str_method = 'Bootstrap Distribution'
+            str_ci = 'Percentile CI'
+        elif self.method == 'boot-bc':
+            str_method = 'Bootstrap Distribution'
+            str_ci = 'BC CI'
+        elif self.method == 'bayes-cred':
+            str_method = 'Bayesian Bootstrap Distribution'
+            str_ci = 'Credible Interval'
+        else:
+            str_method = 'Bayesian Bootstrap Distribution'
+            str_ci = 'HPD Interval'
+        title_str = '{title:} with {alpha:}% {int_type:}\nPoint = {point:.3f}, Interval = [{ll:.3f}, {ul:.3f}]'.format(
+                                                                                        title = str_method, 
+                                                                                        alpha = int((1-self.alpha)*100), 
+                                                                                        int_type = str_ci,
+                                                                                        point = self.indirect['point'],
+                                                                                        ll = self.indirect['ci'][0],
+                                                                                        ul = self.indirect['ci'][1])
+        
+        plt.title(title_str)
+        plt.legend()
+        plt.show()
+
 if __name__ == "__main__":
     x = np.random.normal(0, 1, (100, 1))
     m = .4*x + np.random.normal(0, 1, (100, 1))
     y = .4*m + np.random.normal(0, 1, (100, 1))
-    clf = MediationModel(method = 'bayes-hdi', b1 = 1000, b2 = 1000, mediator_type = 'continuous', estimator = 'sample',
-                         endogenous_type = 'continuous', estimate_all_paths = True)
+    clf = MediationModel(method = 'bayes-hdi', b1 = 5000, b2 = 100, mediator_type = 'continuous', estimator = 'sample',
+                         endogenous_type = 'continuous', estimate_all_paths = True, save_boot_estimates = True)
 
     clf.fit(exog = x, med = m, endog = y)
     print(clf.indirect_effect())
     clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
+    clf.plot_indirect()
