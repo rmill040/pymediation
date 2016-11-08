@@ -4,12 +4,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from patsy import dmatrices
+import pymc as pm
 import scipy.stats
 from sklearn import linear_model
 import statsmodels.api as sm
 import warnings
 warnings.filterwarnings("ignore")
 
+# TODO
+#   - Add documentation Bayesian modeling
+#   - Rewrite API for cleaner modeling
+#   - Test Bayesian modeling
 
 class MediationModel(object):
     """ Estimates an unconditional indirect effect based on a simple mediation model:
@@ -33,8 +38,10 @@ class MediationModel(object):
                                     delta-2 (second-order delta method)
                                     boot-perc (nonparametric bootstrap with percentile CIs)
                                     boot-bc (nonparametric bootstrap with bias-corrected CIs)
-                                    bayes-cred (Bayesian bootstrap with credible intervals)
-                                    bayes-hdi (Bayesian bootstrap with highest density intervals)
+                                    bayesboot-cred (Bayesian bootstrap with credible intervals)
+                                    bayesboot-hdi (Bayesian bootstrap with highest density intervals)
+                                    bayes-normal (Fully Bayesian model with normal priors)
+                                    bayes-robust (Fully Bayesian model with robust Cauchy priors)
 
     mediator_type : string
                     Variable indicating whether mediator variable is continuous or categorical
@@ -66,11 +73,12 @@ class MediationModel(object):
         Instance of MediationModel class
     """
     def __init__(self, method = None, mediator_type = None, endogenous_type = None, b1 = None, 
-                 b2 = None, estimator = 'sample', alpha = .05, fit_intercept = True, save_boot_estimates = False,
-                 estimate_all_paths = False):
+                 b2 = None, bayes_its = None, burn = None, thin = 1, estimator = 'sample', 
+                 alpha = .05, fit_intercept = True, save_boot_estimates = False, estimate_all_paths = False):
 
         # Define global variables
-        if method not in ['delta-1', 'delta-2', 'boot-perc', 'boot-bc', 'bayes-cred', 'bayes-hdi']:
+        if method not in ['delta-1', 'delta-2', 'boot-perc', 'boot-bc', 'bayesboot-cred', 
+                          'bayesboot-hdi', 'bayes-normal', 'bayes-robust']:
             raise ValueError('%s not a valid method')
         else:
             self.method = method
@@ -100,8 +108,17 @@ class MediationModel(object):
         else:
             raise ValueError('estimate_all_paths should be a boolean argument')
 
+        assert(isinstance(bayes_its, int) == True), "bayes_its should be an integer argument"
+        self.bayes_its = bayes_its
+
+        assert(isinstance(burn, int) == True), "burn should be an integer argument"
+        self.burnin = burn
+
+        assert(isinstance(thin, int) == True), "thin should be an integer argument"
+        self.thin = thin
+
         # Global variables to control bootstrap functionality
-        if self.method in ['boot-perc', 'boot-bc', 'bayes-cred', 'bayes-hdi']:
+        if self.method in ['boot-perc', 'boot-bc', 'bayesboot-cred', 'bayesboot-hdi']:
             if estimator not in ['sample', 'mean', 'median']:
                 raise ValueError('%s is not a valid estimator' % estimator)
             else:
@@ -115,7 +132,7 @@ class MediationModel(object):
             assert(isinstance(b1, int) == True), 'b1 should be an interger argument'
             self.b1 = b1
 
-            if self.method in ['bayes-cred', 'bayes-hdi']:
+            if self.method in ['bayesboot-cred', 'bayesboot-hdi']:
                 assert(isinstance(b2, int) == True), 'b2 should be an integer argument'
                 self.b2 = b2
             self.fit_ran = False
@@ -270,6 +287,79 @@ class MediationModel(object):
         ll, ul = point - z_score * np.sqrt(MM_var), point + z_score * np.sqrt(MM_var)
         indirect['point'] = point; indirect['ci'] = np.array([ll, ul]).reshape((1, 2))  
         return indirect  
+
+
+     def _full_bayesian(self, exog = None, med = None, endog = None):
+        """Estimate indirect effect with fully Bayesian model
+
+        Parameters
+        ----------
+        exog : 1d array-like
+            Exogenous variable
+
+        med :1d array-like
+            Mediator variable
+
+        endog : 1d array-like
+            Endogenous variable
+
+        Returns
+        -------
+        indirect : dictionary
+            Dictionary containing: (1) point estimate, (2) interval estimates
+        """
+        indirect = {}
+
+        if self.method == 'bayes-normal':
+            # Mediator model: M ~ i_M + a*X
+            i_M = pm.Normal('i_M', mu = 0, tau = 1e-10, value = 0)
+            a = pm.Normal('a1', mu = 0, tau = 1e-10, value = 0)
+
+            # Endogenous model: Y ~ i_Y + c*X + b*M
+            i_Y = pm.Normal('i_Y', mu = 0, tau = 1e-10, value = 0)
+            c = pm.Normal('c', mu = 0, tau = 1e-10, value = 0)
+            b = pm.Normal('b', mu = 0, tau = 1e-10, value = 0)
+
+        else:
+           # Mediator model: M ~ i_M + a*X
+            i_M = pm.Cauchy('i_M', alpha = 0, beta = 10, value = 0)
+            a = pm.Cauchy('a1', alpha = 0, beta = 2.5, value = 0)    
+
+            # Endogenous model: Y ~ i_Y + c*X + b*M
+            i_Y = pm.Cauchy('i_Y', alpha = 0, beta = 10, value = 0)
+            c = pm.Cauchy('c', alpha = 0, beta = 2.5, value = 0)
+            b = pm.Cauchy('b', alpha = 0, beta = 2.5, value = 0) 
+
+        # Expected values (linear combos)
+        expected_med = i_M + a*exog
+        expected_endog = i_Y + c*exog + b*med
+
+        if self.mediator_type == 'continuous':
+            tau_M = pm.Gamma('tau_M', alpha = .001, beta = .001)
+            response = pm.Normal('response', mu = expected_med, tau = tau_M, value = med, observed = True)
+            med_model = [i_M, a, tau_M, response]
+        else:
+            response = pm.Bernoulli('response', value = med, p = pm.invlogit(expected_med), observed = True) 
+            med_model = [i_M, a, response]
+
+        if self.endogenous_type == 'continuous':
+            tau_Y = pm.Gamma('tau_Y', alpha = .001, beta = .001)
+            response = pm.Normal('response', mu = expected_endog, tau = tau_Y, value = endog, observed = True)
+            endog_model = [i_Y, b, c, tau_Y, response]
+        else:
+            response = pm.Bernoulli('response', value = endog, p = pm.invlogit(expected_endog), observed = True)   
+            endog_model = [i_Y, b, c, response]         
+
+        # Build MCMC model and estimate model
+        bayes_model = pm.Model(med_model + endog_model)
+        mcmc = pm.MCMC(bayes_model)
+        mcmc.sample(iter = self.bayes_its, burn = self.burn, thin = self.thin, progress_bar = False)
+
+        # Get posterior distribution of a and b then create indirect effect
+        a_path = bayes_model.a.trace()
+        b_path = bayes_model.b.trace()
+        indirect['point'] = a_path*b_path
+        return indirect
 
 
     def _boot_point(self, m = None, design_m = None, y = None, design_y = None, boot_estimates = None):
