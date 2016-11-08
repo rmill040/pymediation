@@ -356,8 +356,8 @@ class MediationModel(object):
         mcmc.sample(iter = self.bayes_its, burn = self.burn, thin = self.thin, progress_bar = False)
 
         # Get posterior distribution of a and b then create indirect effect
-        a_path = bayes_model.a.trace()
-        b_path = bayes_model.b.trace()
+        a_path = a.trace()
+        b_path = b.trace()
         indirect['point'] = a_path*b_path
         return indirect
 
