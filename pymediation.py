@@ -1,5 +1,6 @@
 from __future__ import division, print_function
 
+import copy
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -34,14 +35,18 @@ class MediationModel(object):
     ----------
     method : string
              Method for calculating confidence interval for unconditional indirect effect.
-             Valid methods include: delta-1 (first-order delta method)
-                                    delta-2 (second-order delta method)
-                                    boot-perc (nonparametric bootstrap with percentile CIs)
-                                    boot-bc (nonparametric bootstrap with bias-corrected CIs)
-                                    bayesboot-cred (Bayesian bootstrap with credible intervals)
-                                    bayesboot-hdi (Bayesian bootstrap with highest density intervals)
-                                    bayes-normal (Fully Bayesian model with normal priors)
-                                    bayes-robust (Fully Bayesian model with robust Cauchy priors)
+             Valid methods include: 'delta' : multivariate delta method
+                                    'boot' : nonparametric bootstrap
+                                    'bayesboot' : Bayesian bootstrap
+                                    'bayes-norm' : fully Bayesian model with normal priors
+                                    'bayes-robust' fully Bayesian model with robust Cauchy priors
+
+    interval : string
+        Method for interval estimation. Valid arguments depend on the method.
+            - method = delta : 'first' or 'second'
+            - method = boot : 'perc' or 'bc'
+            - method = bayesboot : 'cred' or 'hpd'
+            - method = bayes : 'cred' or 'hpd'
 
     mediator_type : string
                     Variable indicating whether mediator variable is continuous or categorical
@@ -49,93 +54,92 @@ class MediationModel(object):
     endogenous_type : string
                       Variable indicating whether endogenous variable is continuous or categorical
 
-    b1 : int
-        Stage one number of samples to draw - corresponds to the number of bootstrap or Bayesian bootstrap samples
-
-    b2 : int (for bayesboot)
-        Stage two number of samples to draw - corresponds to the size of Bayesian bootstrap samples to draw
-
-    estimator : str (for bootstrap), default sample
-        Bootstrap point estimator. Currently supports sample, mean, and median
-
     alpha : float, default .05
         Type I error rate - corresponds to generating (1-alpha)*100 intervals
 
     fit_intercept : boolean, default True
         Whether to fit an intercept terms
 
-    save_boot_estimates : boolean, default False
-        Whether to save the bootstrap estimates for plotting
+    plot : boolean, default False
+        Whether to plot distribution (empirical sampling or posterior) of indirect effect. Need to specify
+        bootstrap or Bayesian estimation.
+
+    parameters : dict
+        Dictionary of parameters for different estimation methods.
+        Expected keys for bootstrap:
+            - boot_samples : int
+                Number of bootstrap samples
+            - estimator : str
+                Estimator for indirect effect. Currently supports 'sample', 'mean', and 'median'
+        Expected keys for method = 'bayesboot'
+            - boot_samples : int
+                Number of bootstrap samples
+            - resample_size : int
+                Size of Bayesian bootstrap samples
+            - estimator : str
+                Estimator for indirect effect. Currently supports 'sample', 'mean', and 'median'
+        Expected keys for method = 'bayes'
+            - iter : int
+                Number of simulations for MCMC sampler
+            - burn : int
+                Number of burn-in samples
+            - thin : int
+                Factor to thin chain by
+            - estimator : str
+                Estimator for indirect effect. Currentl supports 'mean' and 'median'
+            - n_chains : int
+                Number of chains to run
+            - check_convergence : boolean
+                Run standard tests for convergence
 
     Returns
     -------
     self : object
         Instance of MediationModel class
     """
-    def __init__(self, method = None, mediator_type = None, endogenous_type = None, b1 = None, 
-                 b2 = None, bayes_its = None, burn = None, thin = 1, estimator = 'sample', 
-                 alpha = .05, fit_intercept = True, save_boot_estimates = False, estimate_all_paths = False):
+    def __init__(self, method = None, interval = None, mediator_type = None, endogenous_type = None, 
+                 alpha = .05, fit_intercept = True, plot = False, parameters = None):
+
+        _valid_bool = [True, False]
+        _valid_var = ['continuous', 'categorical']
+        _valid_methods = ['delta', 'boot', 'bayesboot', 'bayes-norm', 'bayes-robust']
 
         # Define global variables
-        if method not in ['delta-1', 'delta-2', 'boot-perc', 'boot-bc', 'bayesboot-cred', 
-                          'bayesboot-hdi', 'bayes-normal', 'bayes-robust']:
-            raise ValueError('%s not a valid method')
-        else:
+        if method in _valid_methods:
             self.method = method
+        else:
+            raise ValueError('%s not a valid method; valid methods are %s' % (method, _valid_methods))
 
-        if mediator_type == 'continuous' or mediator_type == 'categorical':
+        self.interval = interval
+
+        if mediator_type in _valid_var:
             self.mediator_type = mediator_type
         else:
-            raise ValueError('%s not a valid mediator type')
+            raise ValueError('%s not a valid mediator type' % mediator_type)
 
-        if endogenous_type == 'continuous' or endogenous_type == 'categorical':
+        if endogenous_type in _valid_var:
             self.endogenous_type = endogenous_type
         else:
-            raise ValueError('%s not a valid endogenous type')
+            raise ValueError('%s not a valid endogenous type' % endogenous_type)
 
         if alpha <= 0 or alpha >= 1:
-            raise ValueError('%.3f is not a valid value for alpha. Alpha should be in interval (0, 1)')
+            raise ValueError('%.3f is not a valid value for alpha; should be in interval (0, 1)' % alpha)
         else:
             self.alpha = alpha
 
-        if fit_intercept == True or fit_intercept == False:
+        if fit_intercept in _valid_bool:
             self.fit_intercept = fit_intercept
         else:
-            raise ValueError('fit_intercept should be a boolean argument')
+            raise ValueError('%s not a valid value for fit_intercept; should be a boolean argument' % fit_intercept)
 
-        if estimate_all_paths == True or estimate_all_paths == False:
-            self.estimate_all_paths = estimate_all_paths
+        if plot in _valid_bool:
+            self.plot = plot
         else:
-            raise ValueError('estimate_all_paths should be a boolean argument')
+            raise ValueError('%s not a valid value for plot; should be a boolean argument' % plot)
 
-        assert(isinstance(bayes_its, int) == True), "bayes_its should be an integer argument"
-        self.bayes_its = bayes_its
+        self.parameters = parameters
 
-        assert(isinstance(burn, int) == True), "burn should be an integer argument"
-        self.burnin = burn
-
-        assert(isinstance(thin, int) == True), "thin should be an integer argument"
-        self.thin = thin
-
-        # Global variables to control bootstrap functionality
-        if self.method in ['boot-perc', 'boot-bc', 'bayesboot-cred', 'bayesboot-hdi']:
-            if estimator not in ['sample', 'mean', 'median']:
-                raise ValueError('%s is not a valid estimator' % estimator)
-            else:
-                self.estimator = estimator
-
-            if save_boot_estimates == True or save_boot_estimates == False:
-                self.save_boot_estimates = save_boot_estimates
-            else:
-                raise ValueError('save_boot_estimates should be a boolean argument')
-
-            assert(isinstance(b1, int) == True), 'b1 should be an interger argument'
-            self.b1 = b1
-
-            if self.method in ['bayesboot-cred', 'bayesboot-hdi']:
-                assert(isinstance(b2, int) == True), 'b2 should be an integer argument'
-                self.b2 = b2
-            self.fit_ran = False
+        self.fit_ran = False
 
 
     # ..helper functions (all start with underscore _)
@@ -163,6 +167,70 @@ class MediationModel(object):
         # Sort and calculate first-order differences
         u.sort()
         return np.diff(u)
+
+
+    def _delta_method(self):
+        """Estimate indirect effect with confidence interval using multivariate delta method
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        indirect : dictionary
+            Dictionary containing: (1) point estimate, (2) confidence intervals
+        """
+        indirect = {}
+
+        # Mediator variable model
+        if self.mediator_type == 'continuous':
+            clf_mediator = sm.GLM(self.m, self.design_m, family = sm.families.Gaussian())
+        else:
+            clf_mediator = sm.GLM(self.m, self.design_m, family = sm.families.Binomial())
+
+        # Estimate model and get coefficients
+        clf_mediator_results = clf_mediator.fit()
+        beta_m = clf_mediator_results.params.reshape(2,)
+        vcov_m = -np.linalg.inv(clf_mediator.information(beta_m)) # Get variance/covariance matrix
+            
+        # Endogenous variable model
+        if self.endogenous_type == 'continuous':
+            clf_endogenous = sm.GLM(self.y, self.design_y, family = sm.families.Gaussian())
+        else:
+            clf_endogenous = sm.GLM(self.y, self.design_y, family = sm.families.Binomial())
+
+        # Estimate model and get coefficients
+        clf_endogenous_results = clf_endogenous.fit()
+        beta_y = clf_endogenous_results.params.reshape(3,)
+        vcov_y = -np.linalg.inv(clf_endogenous.information(beta_y)) # Get variance/covariance matrix
+
+        # Save estimates for calculations
+        a = beta_m[1]
+        b = beta_y[2]
+
+        # Calculate conditional indirect effect
+        ab = a*b
+     
+        # Variance estimate for mediator variable model
+        var_a = vcov_m[1, 1]
+         
+        # Variance estimate for endogenous variable model
+        var_b = vcov_y[2, 2]
+
+        # First-order approximation
+        if self.interval == 'first':
+            MM_var = b**2*var_a + a**2*var_b
+
+        # Second-order approximation
+        else:
+            MM_var = b**2*var_a + a**2*var_b + var_a*var_b
+
+        # Compute 100(1 - alpha)% CI
+        z_score = scipy.stats.norm.ppf(1 - self.alpha/2)
+        ll, ul = ab - z_score * np.sqrt(MM_var), ab + z_score * np.sqrt(MM_var)
+        indirect['point'] = ab; indirect['ci'] = np.array([ll, ul])
+        return indirect  
 
 
     def _point_estimate(self, m = None, design_m = None, y = None, design_y = None):
@@ -215,82 +283,8 @@ class MediationModel(object):
         return a*b
 
 
-    def _delta_method(self, m = None, design_m = None, y = None, design_y = None):
-        """Estimate indirect effect with confidence interval using multivariate delta method
-
-        Parameters
-        ----------
-        m : 1d array-like
-            Dependent variable for mediator model
-
-        design_m : 2d array-like
-            Design matrix for mediator model
-
-        y : 1d array-like
-            Dependent variable for endogenous model
-
-        design_y : 2d array-like
-            Design matrix for endogenous model
-
-        Returns
-        -------
-        indirect : dictionary
-            Dictionary containing: (1) point estimate, (2) confidence intervals
-        """
-        indirect = {}
-
-        # Mediator variable model
-        if self.mediator_type == 'continuous':
-            clf_mediator = sm.GLM(m, design_m, family = sm.families.Gaussian())
-        else:
-            clf_mediator = sm.GLM(m, design_m, family = sm.families.Binomial())
-
-        # Estimate model and get coefficients
-        clf_mediator_results = clf_mediator.fit()
-        beta_m = clf_mediator_results.params.reshape(2,)
-        vcov_m = -np.linalg.inv(clf_mediator.information(beta_m)) # Get variance/covariance matrix
-            
-        # Endogenous variable model
-        if self.endogenous_type == 'continuous':
-            clf_endogenous = sm.GLM(y, design_y, family = sm.families.Gaussian())
-        else:
-            clf_endogenous = sm.GLM(y, design_y, family = sm.families.Binomial())
-
-        # Estimate model and get coefficients
-        clf_endogenous_results = clf_endogenous.fit()
-        beta_y = clf_endogenous_results.params.reshape(3,)
-        vcov_y = -np.linalg.inv(clf_endogenous.information(beta_y)) # Get variance/covariance matrix
-
-        # Save estimates for calculations
-        a = beta_m[1]
-        b = beta_y[2]
-
-        # Calculate conditional indirect effect
-        point = a*b
-     
-        # Variance estimate for mediator variable model
-        var_a = vcov_m[1, 1]
-         
-        # Variance estimate for endogenous variable model
-        var_b = vcov_y[2, 2]
-
-        # First-order approximation
-        if self.method == 'delta-1':
-            MM_var = b**2*var_a + a**2*var_b
-
-        # Second-order approximation
-        else:
-            MM_var = b**2*var_a + a**2*var_b + var_a*var_b
-
-        # Compute 100(1 - alpha)% CI
-        z_score = scipy.stats.norm.ppf(1 - self.alpha/2)
-        ll, ul = point - z_score * np.sqrt(MM_var), point + z_score * np.sqrt(MM_var)
-        indirect['point'] = point; indirect['ci'] = np.array([ll, ul]).reshape((1, 2))  
-        return indirect  
-
-
-     def _full_bayesian(self, exog = None, med = None, endog = None):
-        """Estimate indirect effect with fully Bayesian model
+    def _bayes_method(self, exog = None, med = None, endog = None):
+        """Estimate indirect effect and intervals with fully Bayesian model
 
         Parameters
         ----------
@@ -310,7 +304,7 @@ class MediationModel(object):
         """
         indirect = {}
 
-        if self.method == 'bayes-normal':
+        if self.method == 'bayes-norm':
             # Mediator model: M ~ i_M + a*X
             i_M = pm.Normal('i_M', mu = 0, tau = 1e-10, value = 0)
             a = pm.Normal('a1', mu = 0, tau = 1e-10, value = 0)
@@ -353,16 +347,38 @@ class MediationModel(object):
         # Build MCMC model and estimate model
         bayes_model = pm.Model(med_model + endog_model)
         mcmc = pm.MCMC(bayes_model)
-        mcmc.sample(iter = self.bayes_its, burn = self.burn, thin = self.thin, progress_bar = False)
+
+        # Run multiple chains if specified
+        for i in xrange(self.parameters['n_chains']):
+            mcmc.sample(iter = self.parameters['iter'], 
+                        burn = self.parameters['burn'], 
+                        thin = self.parameters['thin'], 
+                        progress_bar = False)
 
         # Get posterior distribution of a and b then create indirect effect
-        a_path = a.trace()
-        b_path = b.trace()
-        indirect['point'] = a_path*b_path
+        a_path = a.trace(chain = None)
+        b_path = b.trace(chain = None)
+        ab_estimates = a_path*b_path
+
+        # If plotting distribution of ab
+        if self.plot:
+            self.ab_estimates = a_path*b_path
+
+        # Point estimate
+        if self.parameters['estimator'] == 'mean':
+            indirect['point'] = np.mean(ab_estimates)
+        else:
+            indirect['point'] = np.median(ab_estimates)
+
+        # Interval estimate
+        if self.interval == 'cred':
+            indirect['ci'] = self._boot_interval(ab_estimates = ab_estimates)
+        else:
+            indirect['ci'] = self._hpd_interval(ab_estimates = ab_estimates)
         return indirect
 
 
-    def _boot_point(self, m = None, design_m = None, y = None, design_y = None, boot_estimates = None):
+    def _boot_point(self, m = None, design_m = None, y = None, design_y = None, ab_estimates = None):
         """Get bootstrap point estimate
 
         Parameters
@@ -379,7 +395,7 @@ class MediationModel(object):
         design_y : 2d array-like
             Design matrix for endogenous model
 
-        boot_estimates : 1d array-like
+        ab_estimates : 1d array-like
             Array with bootstrap estimates for each sample
 
         Returns
@@ -389,20 +405,20 @@ class MediationModel(object):
         """
 
         # Get posterior point estimate based on estimator 
-        if self.estimator == 'mean':
-            return np.mean(boot_estimates)
-        elif self.estimator == 'median':
-            return np.median(boot_estimates)
+        if self.parameters['estimator'] == 'mean':
+            return np.mean(ab_estimates)
+        elif self.parameters['estimator'] == 'median':
+            return np.median(ab_estimates)
         else: 
             return self._point_estimate(m = m, design_m = design_m, y = y, design_y = design_y)
        
 
-    def _boot_interval(self, boot_estimates = None, sample_point = None):
+    def _boot_interval(self, ab_estimates = None, sample_point = None):
         """Get (1-alpha)*100 interval estimates based on specified method
 
         Parameters
         ----------
-        estimates : 1d array-like
+        ab_estimates : 1d array-like
             Array with bootstrap estimates for each sample
 
         sample_point : float
@@ -414,20 +430,20 @@ class MediationModel(object):
         CI : 1d array-like
             Lower limit and upper limit interval estimates
         """
-        if self.method in ['boot-perc', 'bayes-cred']:
-            return self._percentile_interval(boot_estimates)
-        elif self.method == 'boot-bc':
-            return self._bias_corrected_interval(boot_estimates, sample_point = sample_point)
+        if self.interval in ['perc', 'cred']:
+            return self._percentile_interval(ab_estimates)
+        elif self.interval == 'bc':
+            return self._bias_corrected_interval(ab_estimates, sample_point = sample_point)
         else: 
-            return self._hdi_interval(boot_estimates)
+            return self._hpd_interval(ab_estimates)
 
 
-    def _percentile_interval(self, boot_estimates = None):
+    def _percentile_interval(self, ab_estimates = None):
         """Get (1-alpha)*100 percentile (nonparametric) or credible (Bayesian) interval estimate
 
         Parameters
         ----------
-        estimates : 1d array-like
+        ab_estimates : 1d array-like
             Array with bootstrap estimates for each sample
 
         Returns
@@ -435,17 +451,17 @@ class MediationModel(object):
         CI : 1d array-like
             Lower limit and upper limit percentile interval estimates
         """
-        ll = np.percentile(boot_estimates, q = (self.alpha/2)*100)
-        ul = np.percentile(boot_estimates, q = (1 - self.alpha/2)*100)
+        ll = np.percentile(ab_estimates, q = (self.alpha/2)*100)
+        ul = np.percentile(ab_estimates, q = (1 - self.alpha/2)*100)
         return np.array([ll, ul])
 
 
-    def _bias_corrected_interval(self, boot_estimates = None, sample_point = None):
+    def _bias_corrected_interval(self, ab_estimates = None, sample_point = None):
         """Get (1-alpha)*100 bias-corrected confidence interval estimate
 
         Parameters
         ----------
-        estimates : 1d array-like
+        ab_estimates : 1d array-like
             Array with bootstrap estimates for each sample
 
         sample_point : float
@@ -456,54 +472,56 @@ class MediationModel(object):
         CI : 1d array-like
             Lower limit and upper limit bias-corrected confidence interval estimates
         """
-        assert(self.estimator == 'sample'), 'The estimator must be sample for bias-corrected intervals'
-        z0 = scipy.stats.norm.ppf(np.sum(boot_estimates < sample_point)/self.b1)
+        assert(self.parameters['estimator'] == 'sample'), 'The estimator must be sample for bias-corrected intervals'
+        
+        # Bias of bootstrap estimates
+        z0 = scipy.stats.norm.ppf(np.sum(ab_estimates < sample_point)/self.parameters['boot_samples'])
+
+        # Adjusted intervals
         adjusted_ll = scipy.stats.norm.cdf(2*z0 + scipy.stats.norm.ppf(self.alpha/2))*100
         adjusted_ul = scipy.stats.norm.cdf(2*z0 + scipy.stats.norm.ppf(1 - self.alpha/2))*100
-        ll = np.percentile(boot_estimates, q = adjusted_ll)
-        ul = np.percentile(boot_estimates, q = adjusted_ul)
+        ll, ul = np.percentile(ab_estimates, q = adjusted_ll), np.percentile(ab_estimates, q = adjusted_ul)
         return np.array([ll, ul])
 
 
     """
     Next two functions taken form the PyMC library https://github.com/pymc-devs/pymc -> utils.py
     """
-    def _calc_min_interval(self, boot_estimates = None):
+    def _calc_min_interval(self, ab_estimates = None):
         """Determine the minimum interval of a given width
 
         Parameters
         ----------
-        boot_estimates : SORTED numpy array with dimensions = [b1, 1]
-            Array with Bayesian bootstrap estimates for each sample
+        ab_estimates : SORTED numpy array with dimensions = [b1, 1]
+            Array with ab estimates based on bootstrap or Bayesian method
 
         Returns
         -------
         CI : 1d array-like
             Lower limit and upper limit for highest density interval estimates
         """
-        n = len(boot_estimates)
+        B = len(ab_estimates)
         cred_mass = 1.0 - self.alpha
 
-        interval_idx_inc = int(np.floor(cred_mass*n))
-        n_intervals = n - interval_idx_inc
-        interval_width = boot_estimates[interval_idx_inc:] - boot_estimates[:n_intervals]
+        interval_idx_inc = int(np.floor(cred_mass*B))
+        n_intervals = B - interval_idx_inc
+        interval_width = ab_estimates[interval_idx_inc:] - ab_estimates[:n_intervals]
 
         if len(interval_width) == 0:
             raise ValueError('Too few elements for interval calculation')
 
         min_idx = np.argmin(interval_width)
-        hdi_min = boot_estimates[min_idx]
-        hdi_max = boot_estimates[min_idx+interval_idx_inc]
+        hdi_min, hdi_max = ab_estimates[min_idx], ab_estimates[min_idx+interval_idx_inc]
         return np.array([hdi_min, hdi_max])
 
 
-    def _hdi_interval(self, boot_estimates = None):
+    def _hpd_interval(self, ab_estimates = None):
         """Get (1-alpha)*100 highest posterior density estimates
 
         Parameters
         ----------
-        boot_estimates : numpy array with dimensions = [b1, 1]
-            Array with Bayesian bootstrap estimates for each sample
+        ab_estimates : numpy array with dimensions = [b1, 1]
+            Array with ab estimates based on bootstrap or Bayesian method
 
         Returns
         -------
@@ -512,13 +530,13 @@ class MediationModel(object):
         """
 
         # Make a copy of trace
-        boot_estimates = boot_estimates.copy()
+        ab_estimates = ab_estimates.copy()
 
         # For multivariate node
-        if boot_estimates.ndim > 1:
+        if ab_estimates.ndim > 1:
 
             # Transpose first, then sort
-            tx = np.transpose(boot_estimates, list(range(boot_estimates.ndim))[1:]+[0])
+            tx = np.transpose(ab_estimates, list(range(ab_estimates.ndim))[1:]+[0])
             dims = np.shape(tx)
 
             # Container list for intervals
@@ -541,26 +559,16 @@ class MediationModel(object):
 
         else:
             # Sort univariate node
-            sx = np.sort(boot_estimates)
+            sx = np.sort(ab_estimates)
             return np.array(self._calc_min_interval(sx))
 
 
-    def _boot_method(self, m = None, design_m = None, y = None, design_y = None):
+    def _boot_method(self):
         """Estimate indirect effect with confidence interval using nonparametric or Bayesian bootstrap
 
         Parameters
         ----------
-        m : 1d array-like
-            Dependent variable for mediator model
-
-        design_m : 2d array-like
-            Design matrix for mediator model
-
-        y : 1d array-like
-            Dependent variable for endogenous model
-
-        design_y : 2d array-like
-            Design matrix for endogenous model
+        None
 
         Returns
         -------
@@ -568,62 +576,57 @@ class MediationModel(object):
             Dictionary containing: (1) point estimate, (2) confidence intervals
         """
         indirect = {}
-        boot_estimates = np.zeros((self.b1))
-        n = m.shape[0]  # Assumes all arguments have same size
+        ab_estimates = np.zeros((self.b1))
 
         # Nonparametric bootstrap. Note, p = None implies uniform distribution over np.arange(n)
-        if self.method in ['boot-perc', 'boot-bc']:
-            for i in xrange(self.b1):
-                idx = np.random.choice(np.arange(n), replace = True, p = None, size = n)
-                boot_estimates[i] = self._point_estimate(m = m[idx], design_m = design_m[idx], 
-                                                         y = y[idx], design_y = design_y[idx])
+        if self.method == 'boot':
+            for i in xrange(self.parameters['boot_samples']):
+                idx = np.random.choice(np.arange(self.n), 
+                                                 replace = True, 
+                                                 p = None, 
+                                                 size = self.n)
+                ab_estimates[i] = self._point_estimate(m = m[idx], design_m = design_m[idx], 
+                                                       y = y[idx], design_y = design_y[idx])
         else:
             # Bayesian bootstrapping
-            for i in xrange(self.b1):
-                probs = self._bayes_probs(n)
-                idx = np.random.choice(np.arange(n), replace = True, p = probs, size = self.b2)
-                boot_estimates[i] = self._point_estimate(m = m[idx], design_m = design_m[idx], 
-                                                            y = y[idx], design_y = design_y[idx])
+            for i in xrange(self.parameters['boot_samples']):
+                probs = self._bayes_probs(self.n)
+                idx = np.random.choice(np.arange(self.n), 
+                                       replace = True, 
+                                       p = probs, 
+                                       size = self.parameters['resample_size'])
+                ab_estimates[i] = self._point_estimate(m = m[idx], design_m = design_m[idx], 
+                                                       y = y[idx], design_y = design_y[idx])
 
-        if self.save_boot_estimates:
-            indirect['boot_estimates'] = boot_estimates
+        if self.plot:
+            self.ab_estimates = ab_estimates
 
         # Bootstrap point estimate and confidence interval
         indirect['point'] = self._boot_point(m = m, design_m = design_m, y = y, 
-                                             design_y = design_y, boot_estimates = boot_estimates)
-        indirect['ci'] = self._boot_interval(boot_estimates = boot_estimates, sample_point = indirect['point'])
+                                             design_y = design_y, ab_estimates = ab_estimates)
+        indirect['ci'] = self._boot_interval(ab_estimates = ab_estimates, sample_point = indirect['point'])
         return indirect
 
 
-    def _estimate_paths(self, m = None, design_m = None, y = None, design_y = None):
+    def _estimate_paths(self):
         """Estimate all coefficients from mediation model
 
         Parameters
         ----------
-        m : 1d array-like
-            Dependent variable for mediator model
-
-        design_m : 2d array-like
-            Design matrix for mediator model
-
-        y : 1d array-like
-            Dependent variable for endogenous model
-
-        design_y : 2d array-like
-            Design matrix for endogenous model
+        None
 
         Returns
         -------
         self : object
             Creates a dictionary that contains the point estimates, standard errors, and confidence intervals
             for each structural path in the model
-        """
+        """        
         # Estimate mediator model
         self.all_paths = {}
         if self.mediator_type == 'continuous':
-            clf_mediator = sm.GLM(m, design_m, family = sm.families.Gaussian())
+            clf_mediator = sm.GLM(self.m, self.design_m, family = sm.families.Gaussian())
         else:
-            clf_mediator = sm.GLM(m, design_m, family = sm.families.Binomial())
+            clf_mediator = sm.GLM(self.m, self.design_m, family = sm.families.Binomial())
         results_mediator = clf_mediator.fit()
 
         # Get coefficients
@@ -641,9 +644,9 @@ class MediationModel(object):
 
         # Estimate endogenous model
         if self.endogenous_type == 'continuous':
-            clf_endogenous = sm.GLM(y, design_y, family = sm.families.Gaussian())
+            clf_endogenous = sm.GLM(self.y, self.design_y, family = sm.families.Gaussian())
         else:
-            clf_endogenous = sm.GLM(y, design_y, family = sm.families.Binomial())
+            clf_endogenous = sm.GLM(self.y, self.design_y, family = sm.families.Binomial())
         results_endogenous = clf_endogenous.fit()
 
         # Get coefficients
@@ -690,24 +693,22 @@ class MediationModel(object):
         data = pd.DataFrame(combined, columns = ['x', 'm', 'y'])
 
         # Define variables
-        m, design_m = dmatrices('m ~ x', data = data)
-        y, design_y = dmatrices('y ~ x + m', data = data)
+        self.n = m.shape[0]
+        self.m, self.design_m = dmatrices('m ~ x', data = data)
+        self.y, self.design_y = dmatrices('y ~ x + m', data = data)
 
         # If no intercept, then drop from both design matrices
         if self.fit_intercept == False:
-            design_m = np.delete(design_m, [0], axis = 1)
-            design_y = np.delete(design_y, [0], axis = 1)
-
-        # Estimates all paths if specified
-        if self.estimate_all_paths:
-            self.n = m.shape[0]
-            self._estimate_paths(m = m, design_m = design_m, y = y, design_y = design_y)
+            self.design_m = np.delete(self.design_m, [0], axis = 1)
+            self.design_y = np.delete(self.design_y, [0], axis = 1)
 
         # Estimate indirect effect based on method
-        if self.method in ['delta-1', 'delta-2']:
-            self.indirect = self._delta_method(m = m, design_m = design_m, y = y, design_y = design_y)
+        if self.method == 'delta':
+            self.indirect = self._delta_method()
+        elif self.method == 'boot':
+            self.indirect = self._boot_method()
         else:
-            self.indirect = self._boot_method(m = m, design_m = design_m, y = y, design_y = design_y)
+            self.indirect = self._bayes_method(exog = exog, med = med, endog = endog)
         self.fit_ran = True
 
 
@@ -749,27 +750,35 @@ class MediationModel(object):
         """
         # Error checking
         assert(self.fit_ran == True), 'Need to run .fit() method before printing summary'
-        assert(self.estimate_all_paths == True), 'Need to specify True for estimate_all_paths to get summary'
+
+        # Estimate all paths
+        self._estimate_paths()
 
         # Define method strings
-        if self.method == 'delta-1':
-            str_method = 'Taylor Series Approximation'
-            str_ci = 'First-Order Multivariate Delta'
-        elif self.method == 'delta-2':
-            str_method = 'Taylor Series Approximation'
-            str_ci = 'Second-Order Multivariate Delta'
-        elif self.method == 'boot-perc':
+        if self.method == 'delta':
+            str_method = 'Multivariate Delta Method'
+            if self.interval == 'first':
+                str_interval = 'First-Order Approximation'
+            else:
+                str_interval = 'Second-Order Approximation'
+        elif self.method == 'boot':
             str_method = 'Nonparametric Bootstrap'
-            str_ci = 'Percentile'
-        elif self.method == 'boot-bc':
-            str_method = 'Nonparametric Bootstrap'
-            str_ci = 'Bias-Corrected'
-        elif self.method == 'bayes-cred':
+            if self.interval == 'perc':
+                str_interval = 'Percentile'
+            else:
+                str_interval = 'Bias-Corrected'
+        elif self.method == 'bayesboot':
             str_method = 'Bayesian Bootstrap'
-            str_ci = 'Credible'
+            if self.interval == 'cred':
+                str_interval = 'Credible'
+            else:
+                str_interval = 'Highest Posterior Density'
         else:
-            str_method = 'Bayesian Bootstrap'
-            str_ci = 'Highest Posterior Density'
+            str_method = 'Fully Bayesian'
+            if self.interval == 'cred':
+                str_interval = 'Credible'
+            else:
+                str_interval = 'Highest Posterior Density'
 
         # Define models
         if self.mediator_type == 'continuous':
@@ -812,13 +821,24 @@ class MediationModel(object):
         print('{0:<20}{1:<14}'.format('Alpha:', self.alpha))
 
         print('\n{0:<20}{1:<14}'.format('Method:', str_method))
-        print('{0:<20}{1:<14}'.format('Interval:', str_ci))
+        print('{0:<20}{1:<14}'.format('Interval:', str_interval))
 
-        if self.method in ['boot-perc', 'boot-bc', 'bayes-cred', 'bayes-hdi']:
-            print('{0:<20}{1:<3}'.format('Boot Samples:', self.b1))
-            if self.method in ['bayes-cred', 'bayes-hdi']:
-                print('{0:<20}{1:<3}'.format('Resample Size:', self.b2))
-                print('{0:<20}{1:<10}'.format('Estimator:', self.estimator))
+        if self.method in ['boot', 'bayesboot']:
+            print('{0:<20}{1:<3}'.format('Boot Samples:', self.parameters['boot_samples']))
+            if self.method == 'bayesboot':
+                print('{0:<20}{1:<3}'.format('Resample Size:', self.parameters['resample_size']))
+                print('{0:<20}{1:<10}'.format('Estimator:', self.parameters['estimator']))
+        
+        elif self.method in ['bayes-norm', 'bayes-robust']:
+            if self.method == 'bayes-norm':
+                prior_type = 'Normal'
+            else:
+                prior_type = 'Robust'
+
+            print('{0:<20}{1:<3}'.format('Prior Type:', prior_type))
+            print('{0:<20}{1:<3}'.format('Iterations:', self.parameters['iter']))
+            print('{0:<20}{1:<3}'.format('Burn-in:', self.parameters['burn']))
+            print('{0:<20}{1:<3}'.format('Thin:', self.parameters['thin']))
 
         # Parameter estimates summary
         print('\n{:-^71}'.format(''))
@@ -879,7 +899,7 @@ class MediationModel(object):
         print('{:-^71}'.format(''))
 
     def plot_indirect(self):
-        """Plot histogram of bootstrap distribution of indirect effect
+        """Plot histogram of bootstrap or posterior distribution of indirect effect
 
         Parameters
         ----------
@@ -890,33 +910,40 @@ class MediationModel(object):
         None
         """
         # Error checking
-        assert(self.fit_ran == True), 'Need to run .plot() method before generating histogram'
-        assert(self.save_boot_estimates == True), 'Need to specify True for save_boot_estimates to generate histogram'
+        assert(self.fit_ran == True), 'Need to run .fit() method before generating histogram'
+        if self.method == 'delta':
+            raise ValueError('Plotting not available for multivariate delta method')
         
         # Create figure
         plt.figure()
-        plt.hist(self.indirect['boot_estimates'], bins = 100, color = 'gray')
+        plt.hist(self.ab_estimates, bins = 100, color = 'gray')
         plt.axvline(self.indirect['point'], color = 'blue', label = 'Point', linewidth = 3)
         plt.axvline(self.indirect['ci'][0], color = 'blue', label = 'Interval', linestyle = 'dashed', linewidth = 3)
         plt.axvline(self.indirect['ci'][1], color = 'blue', linestyle = 'dashed', linewidth = 3)
         
         # Check method for title of histogram
-        if self.method == 'boot-perc':
+        if self.method == 'boot':
             str_method = 'Bootstrap Distribution'
-            str_ci = 'Percentile CI'
-        elif self.method == 'boot-bc':
-            str_method = 'Bootstrap Distribution'
-            str_ci = 'BC CI'
-        elif self.method == 'bayes-cred':
-            str_method = 'Bayesian Bootstrap Distribution'
-            str_ci = 'Credible Interval'
+            if self.interval == 'perc':
+                str_interval = 'Percentile Intervals'
+            else:
+                str_interval = 'Bias-Corrected Intervals'
+        elif self.method == 'bayesboot':
+            str_method = 'BayesBoot Posterior Distribution'
+            if self.interval == 'cred':
+                str_interval = 'Credible Intervals'
+            else:
+                str_interval = 'HPD Intervals'
         else:
-            str_method = 'Bayesian Bootstrap Distribution'
-            str_ci = 'HPD Interval'
+            str_method = 'Bayesian Posterior Distribution'
+            if self.interval == 'cred':
+                str_interval = 'Credible Intervals'
+            else:
+                str_interval = 'HPD Intervals'
         title_str = '{title:} with {alpha:}% {int_type:}\nPoint = {point:.3f}, Interval = [{ll:.3f}, {ul:.3f}]'.format(
                                                                                         title = str_method, 
                                                                                         alpha = int((1-self.alpha)*100), 
-                                                                                        int_type = str_ci,
+                                                                                        int_type = str_interval,
                                                                                         point = self.indirect['point'],
                                                                                         ll = self.indirect['ci'][0],
                                                                                         ul = self.indirect['ci'][1])
@@ -926,12 +953,30 @@ class MediationModel(object):
         plt.show()
 
 if __name__ == "__main__":
+    
+    # Simulate data
     x = np.random.normal(0, 1, (100, 1))
     m = .4*x + np.random.normal(0, 1, (100, 1))
     y = .4*m + np.random.normal(0, 1, (100, 1))
-    clf = MediationModel(method = 'bayes-hdi', b1 = 5000, b2 = 100, mediator_type = 'continuous', estimator = 'sample',
-                         endogenous_type = 'continuous', estimate_all_paths = True, save_boot_estimates = True)
 
+    # Delta method (first-order)
+    clf = MediationModel(method = 'delta', interval = 'first', mediator_type = 'continuous',
+                         endogenous_type = 'continuous', plot = False)
+    clf.fit(exog = x, med = m, endog = y)
+    print(clf.indirect_effect())
+    clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
+
+    # Delta method (second-order)
+    clf = MediationModel(method = 'delta', interval = 'second', mediator_type = 'continuous',
+                         endogenous_type = 'continuous', plot = False)
+    clf.fit(exog = x, med = m, endog = y)
+    print(clf.indirect_effect())
+    clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
+
+    # Fully Bayesian method (HPD intervals)
+    params = {'iter': 10000, 'burn': 500, 'thin': 1, 'n_chains': 2, 'estimator': 'mean'}
+    clf = MediationModel(method = 'bayes-norm', interval = 'hpd', mediator_type = 'continuous', 
+                         endogenous_type = 'continuous', plot = True, parameters = params)
     clf.fit(exog = x, med = m, endog = y)
     print(clf.indirect_effect())
     clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
