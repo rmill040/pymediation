@@ -1,6 +1,5 @@
 from __future__ import division, print_function
 
-import copy
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -12,10 +11,6 @@ import statsmodels.api as sm
 import warnings
 warnings.filterwarnings("ignore")
 
-# TODO
-#   - Add documentation Bayesian modeling
-#   - Rewrite API for cleaner modeling
-#   - Test Bayesian modeling
 
 class MediationModel(object):
     """ Estimates an unconditional indirect effect based on a simple mediation model:
@@ -34,31 +29,28 @@ class MediationModel(object):
     Parameters
     ----------
     method : string
-             Method for calculating confidence interval for unconditional indirect effect.
-             Valid methods include: 'delta' : multivariate delta method
-                                    'boot' : nonparametric bootstrap
-                                    'bayesboot' : Bayesian bootstrap
-                                    'bayes-norm' : fully Bayesian model with normal priors
-                                    'bayes-robust' fully Bayesian model with robust Cauchy priors
+        Method for calculating confidence interval for unconditional indirect effect.
+        Valid methods include: 'delta' : multivariate delta method
+                               'boot' : nonparametric bootstrap
+                               'bayesboot' : Bayesian bootstrap
+                               'bayes-norm' : fully Bayesian model with normal priors
+                               'bayes-robust' fully Bayesian model with robust Cauchy priors
 
     interval : string
         Method for interval estimation. Valid arguments depend on the method.
-            - method = delta : 'first' or 'second'
-            - method = boot : 'perc' or 'bc'
-            - method = bayesboot : 'cred' or 'hpd'
-            - method = bayes : 'cred' or 'hpd'
+            - method = delta : 'first' or 'second' for order of Taylor series approximation
+            - method = boot : 'perc' (percentile) or 'bc' (bias-corrected)
+            - method = bayesboot : 'cred' (credible) or 'hpd' (highest posterior density)
+            - method = bayes : 'cred' (credible) or 'hpd' (highest posterior density)
 
     mediator_type : string
-                    Variable indicating whether mediator variable is continuous or categorical
+        Variable indicating whether mediator variable is continuous or categorical
 
     endogenous_type : string
-                      Variable indicating whether endogenous variable is continuous or categorical
+        Variable indicating whether endogenous variable is continuous or categorical
 
     alpha : float, default .05
         Type I error rate - corresponds to generating (1-alpha)*100 intervals
-
-    fit_intercept : boolean, default True
-        Whether to fit an intercept terms
 
     plot : boolean, default False
         Whether to plot distribution (empirical sampling or posterior) of indirect effect. Need to specify
@@ -78,7 +70,7 @@ class MediationModel(object):
                 Size of Bayesian bootstrap samples
             - estimator : str
                 Estimator for indirect effect. Currently supports 'sample', 'mean', and 'median'
-        Expected keys for method = 'bayes'
+        Expected keys for method = 'bayes-norm' or 'bayes-robust'
             - iter : int
                 Number of simulations for MCMC sampler
             - burn : int
@@ -98,7 +90,7 @@ class MediationModel(object):
         Instance of MediationModel class
     """
     def __init__(self, method = None, interval = None, mediator_type = None, endogenous_type = None, 
-                 alpha = .05, fit_intercept = True, plot = False, parameters = None):
+                 alpha = .05, plot = False, parameters = None):
 
         _valid_bool = [True, False]
         _valid_var = ['continuous', 'categorical']
@@ -127,16 +119,13 @@ class MediationModel(object):
         else:
             self.alpha = alpha
 
-        if fit_intercept in _valid_bool:
-            self.fit_intercept = fit_intercept
-        else:
-            raise ValueError('%s not a valid value for fit_intercept; should be a boolean argument' % fit_intercept)
-
         if plot in _valid_bool:
             self.plot = plot
         else:
             raise ValueError('%s not a valid value for plot; should be a boolean argument' % plot)
 
+        if parameters is not None:
+            assert(isinstance(parameters, dict) == True), 'parameters argument should be a dictionary'
         self.parameters = parameters
 
         self.fit_ran = False
@@ -329,20 +318,20 @@ class MediationModel(object):
         expected_endog = i_Y + c*exog + b*med
 
         if self.mediator_type == 'continuous':
-            tau_M = pm.Gamma('tau_M', alpha = .001, beta = .001)
-            response = pm.Normal('response', mu = expected_med, tau = tau_M, value = med, observed = True)
-            med_model = [i_M, a, tau_M, response]
+            tau_M = pm.Gamma('tau_M', alpha = .001, beta = .001, value = 1)
+            response_M = pm.Normal('response_M', mu = expected_med, tau = tau_M, value = med, observed = True)
+            med_model = [i_M, a, tau_M, response_M]
         else:
-            response = pm.Bernoulli('response', value = med, p = pm.invlogit(expected_med), observed = True) 
-            med_model = [i_M, a, response]
+            response_M = pm.Bernoulli('response_M', value = med, p = pm.invlogit(expected_med), observed = True) 
+            med_model = [i_M, a, response_M]
 
         if self.endogenous_type == 'continuous':
-            tau_Y = pm.Gamma('tau_Y', alpha = .001, beta = .001)
-            response = pm.Normal('response', mu = expected_endog, tau = tau_Y, value = endog, observed = True)
-            endog_model = [i_Y, b, c, tau_Y, response]
+            tau_Y = pm.Gamma('tau_Y', alpha = .001, beta = .001, value = 1)
+            response_Y = pm.Normal('response_Y', mu = expected_endog, tau = tau_Y, value = endog, observed = True)
+            endog_model = [i_Y, b, c, tau_Y, response_Y]
         else:
-            response = pm.Bernoulli('response', value = endog, p = pm.invlogit(expected_endog), observed = True)   
-            endog_model = [i_Y, b, c, response]         
+            response_Y = pm.Bernoulli('response_Y', value = endog, p = pm.invlogit(expected_endog), observed = True)   
+            endog_model = [i_Y, b, c, response_Y]         
 
         # Build MCMC model and estimate model
         bayes_model = pm.Model(med_model + endog_model)
@@ -378,7 +367,7 @@ class MediationModel(object):
         return indirect
 
 
-    def _boot_point(self, m = None, design_m = None, y = None, design_y = None, ab_estimates = None):
+    def _boot_point(self, ab_estimates = None):
         """Get bootstrap point estimate
 
         Parameters
@@ -410,7 +399,7 @@ class MediationModel(object):
         elif self.parameters['estimator'] == 'median':
             return np.median(ab_estimates)
         else: 
-            return self._point_estimate(m = m, design_m = design_m, y = y, design_y = design_y)
+            return self._point_estimate(m = self.m, design_m = self.design_m, y = self.y, design_y = self.design_y)
        
 
     def _boot_interval(self, ab_estimates = None, sample_point = None):
@@ -573,7 +562,7 @@ class MediationModel(object):
         Returns
         -------
         indirect : dictionary
-            Dictionary containing: (1) point estimate, (2) confidence intervals
+            Dictionary containing: (1) point estimate, (2) interval estimates
         """
         indirect = {}
         ab_estimates = np.zeros((self.b1))
@@ -585,8 +574,8 @@ class MediationModel(object):
                                                  replace = True, 
                                                  p = None, 
                                                  size = self.n)
-                ab_estimates[i] = self._point_estimate(m = m[idx], design_m = design_m[idx], 
-                                                       y = y[idx], design_y = design_y[idx])
+                ab_estimates[i] = self._point_estimate(m = self.m[idx], design_m = self.design_m[idx], 
+                                                       y = self.y[idx], design_y = self.design_y[idx])
         else:
             # Bayesian bootstrapping
             for i in xrange(self.parameters['boot_samples']):
@@ -595,15 +584,14 @@ class MediationModel(object):
                                        replace = True, 
                                        p = probs, 
                                        size = self.parameters['resample_size'])
-                ab_estimates[i] = self._point_estimate(m = m[idx], design_m = design_m[idx], 
-                                                       y = y[idx], design_y = design_y[idx])
+                ab_estimates[i] = self._point_estimate(m = self.m[idx], design_m = self.design_m[idx], 
+                                                       y = self.y[idx], design_y = self.design_y[idx])
 
         if self.plot:
             self.ab_estimates = ab_estimates
 
         # Bootstrap point estimate and confidence interval
-        indirect['point'] = self._boot_point(m = m, design_m = design_m, y = y, 
-                                             design_y = design_y, ab_estimates = ab_estimates)
+        indirect['point'] = self._boot_point(ab_estimates = ab_estimates)
         indirect['ci'] = self._boot_interval(ab_estimates = ab_estimates, sample_point = indirect['point'])
         return indirect
 
@@ -696,11 +684,6 @@ class MediationModel(object):
         self.n = m.shape[0]
         self.m, self.design_m = dmatrices('m ~ x', data = data)
         self.y, self.design_y = dmatrices('y ~ x + m', data = data)
-
-        # If no intercept, then drop from both design matrices
-        if self.fit_intercept == False:
-            self.design_m = np.delete(self.design_m, [0], axis = 1)
-            self.design_y = np.delete(self.design_y, [0], axis = 1)
 
         # Estimate indirect effect based on method
         if self.method == 'delta':
@@ -839,6 +822,7 @@ class MediationModel(object):
             print('{0:<20}{1:<3}'.format('Iterations:', self.parameters['iter']))
             print('{0:<20}{1:<3}'.format('Burn-in:', self.parameters['burn']))
             print('{0:<20}{1:<3}'.format('Thin:', self.parameters['thin']))
+            print('{0:<20}{1:<3}'.format('Number of Chains:', self.parameters['n_chains']))
 
         # Parameter estimates summary
         print('\n{:-^71}'.format(''))
@@ -947,7 +931,6 @@ class MediationModel(object):
                                                                                         point = self.indirect['point'],
                                                                                         ll = self.indirect['ci'][0],
                                                                                         ul = self.indirect['ci'][1])
-        
         plt.title(title_str)
         plt.legend()
         plt.show()
@@ -973,9 +956,18 @@ if __name__ == "__main__":
     print(clf.indirect_effect())
     clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
 
-    # Fully Bayesian method (HPD intervals)
+    # Fully Bayesian method with normal priors (HPD intervals)
     params = {'iter': 10000, 'burn': 500, 'thin': 1, 'n_chains': 2, 'estimator': 'mean'}
     clf = MediationModel(method = 'bayes-norm', interval = 'hpd', mediator_type = 'continuous', 
+                         endogenous_type = 'continuous', plot = True, parameters = params)
+    clf.fit(exog = x, med = m, endog = y)
+    print(clf.indirect_effect())
+    clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
+    clf.plot_indirect()
+
+    # Fully Bayesian method with robust priors (HPD intervals)
+    params = {'iter': 10000, 'burn': 500, 'thin': 1, 'n_chains': 2, 'estimator': 'mean'}
+    clf = MediationModel(method = 'bayes-robust', interval = 'hpd', mediator_type = 'continuous', 
                          endogenous_type = 'continuous', plot = True, parameters = params)
     clf.fit(exog = x, med = m, endog = y)
     print(clf.indirect_effect())
