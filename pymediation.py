@@ -41,7 +41,7 @@ class MediationModel(object):
             - method = delta : 'first' or 'second' for order of Taylor series approximation
             - method = boot : 'perc' (percentile) or 'bc' (bias-corrected)
             - method = bayesboot : 'cred' (credible) or 'hpd' (highest posterior density)
-            - method = bayes : 'cred' (credible) or 'hpd' (highest posterior density)
+            - method = bayes-norm or bayes-robust : 'cred' (credible) or 'hpd' (highest posterior density)
 
     mediator_type : string
         Variable indicating whether mediator variable is continuous or categorical
@@ -78,7 +78,7 @@ class MediationModel(object):
             - thin : int
                 Factor to thin chain by
             - estimator : str
-                Estimator for indirect effect. Currentl supports 'mean' and 'median'
+                Estimator for indirect effect. Currently supports 'mean' and 'median'
             - n_chains : int
                 Number of chains to run
             - check_convergence : boolean
@@ -565,7 +565,7 @@ class MediationModel(object):
             Dictionary containing: (1) point estimate, (2) interval estimates
         """
         indirect = {}
-        ab_estimates = np.zeros((self.b1))
+        ab_estimates = np.zeros((self.parameters['boot_samples']))
 
         # Nonparametric bootstrap. Note, p = None implies uniform distribution over np.arange(n)
         if self.method == 'boot':
@@ -681,14 +681,14 @@ class MediationModel(object):
         data = pd.DataFrame(combined, columns = ['x', 'm', 'y'])
 
         # Define variables
-        self.n = m.shape[0]
+        self.n = med.shape[0]
         self.m, self.design_m = dmatrices('m ~ x', data = data)
         self.y, self.design_y = dmatrices('y ~ x + m', data = data)
 
         # Estimate indirect effect based on method
         if self.method == 'delta':
             self.indirect = self._delta_method()
-        elif self.method == 'boot':
+        elif self.method in ['boot', 'bayesboot']:
             self.indirect = self._boot_method()
         else:
             self.indirect = self._bayes_method(exog = exog, med = med, endog = endog)
