@@ -8,7 +8,7 @@ import os
 import sys
 import timeit
 
-from pymediation import MediationModel
+from ..core.mediation import MediationModel
 
 
 # Convert linear combination to binomial random variable
@@ -100,7 +100,6 @@ def simulation(iterations = None, rank = None):
 
 						# Bootstrap methods
 						for interval in boot_interval:
-							print(interval)
 							clf = MediationModel(method = 'boot',
 												 interval = interval, 
 												 mediator_type = variable,
@@ -124,12 +123,9 @@ def simulation(iterations = None, rank = None):
 
 						# Bayesian bootstrap methods
 						for interval in bayes_interval:
-							print(interval)
 							b2_list = [N, 10*N, 5000]
 							for b2 in b2_list:
-								print('\t%s' % b2)
 								for estimator in bayesboot_estimators:
-									print('\t\t%s' % estimator)
 									bayesboot_params = {'boot_samples': 5000, 'resample_size': b2, 'estimator': estimator}
 									clf = MediationModel(method = 'bayesboot',
 														 interval = interval, 
@@ -153,11 +149,8 @@ def simulation(iterations = None, rank = None):
 						
 						# Fully Bayesian methods
 						for method in bayes_methods:
-							print(method)
 							for interval in bayes_interval:
-								print('\t%s' % interval)
 								for estimator in bayes_estimators:
-									print('\t\t%s' % estimator)
 									bayes_params = {'iter': 20000, 'burn': 10000, 'thin': 1, 'estimator': estimator, 'n_chains': 1}
 									clf = MediationModel(method = method,
 														 interval = interval, 

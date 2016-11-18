@@ -10,14 +10,12 @@ __all__ = ["testMediationMethods"]
 
 class testMediationMethods(unittest.TestCase):
 
-
+    # Convert to probabilities and sample random binomial variables
     def _linear_to_binomial(self, linear_combo = None, n = None):
-
-        # Convert to probabilities and sample random binomial variables
         tmp = 1 / (1 + np.exp(-linear_combo))
         return np.random.binomial(1, tmp, (n, 1))
 
-
+    # Simulate data for testing
     def _simulate_data(self, N = 5000, mediator_type = None, endogenous_type = None, effect = .59):
         
         # Exogenous variable
@@ -43,12 +41,13 @@ class testMediationMethods(unittest.TestCase):
         self.TRUE_ab = effect*effect
 
         # Fudge factor for point estimates
-        self.EPS = .10
+        self.EPS = .50
 
-    # Test Delta method
+    # Test multivariate delta method
     def test_delta(self):
+        print('\nTesting delta method...\n')
 
-        # Define delta intervals
+        # Define lists of interest
         intervals = ['first', 'second']
         med_types = ['continuous', 'categorical']
         end_types = ['continuous', 'categorical']
@@ -66,9 +65,11 @@ class testMediationMethods(unittest.TestCase):
                     estimates = clf.indirect_effect()
                     self.assertTrue(estimates[0] > self.TRUE_ab - self.EPS and estimates[0] < self.TRUE_ab + self.EPS)
 
+    # Test bootstrap method
     def test_boot(self):
+        print('\nTesting bootstrap method...\n')
 
-        # Define boot intervals
+        # Define lists of interest
         intervals = ['perc', 'bc']
         estimator = ['sample', 'mean', 'median']
         med_types = ['continuous', 'categorical']
@@ -90,44 +91,67 @@ class testMediationMethods(unittest.TestCase):
                         estimates = clf.indirect_effect()
                         self.assertTrue(estimates[0] > self.TRUE_ab - self.EPS and estimates[0] < self.TRUE_ab + self.EPS)
 
+
+    # Test Bayesian bootstrap method
     def test_bayesboot(self):
-        pass
+        print('\nTesting Bayesian bootstrap method...\n')
 
+        # Define lists of interest
+        intervals = ['cred', 'hpd']
+        estimator = ['sample', 'mean', 'median']
+        med_types = ['continuous', 'categorical']
+        end_types = ['continuous', 'categorical']
+
+        for est in estimator:
+            for interval in intervals:
+                for med_type in med_types:
+                    for end_type in end_types:
+                        self._simulate_data(mediator_type = med_type, endogenous_type = end_type)
+                        params = {'boot_samples': 1000, 'resample_size': 1000, 'estimator': est}
+                        clf = MediationModel(method = 'bayesboot', 
+                                             interval = interval, 
+                                             mediator_type = med_type,
+                                             endogenous_type = end_type,
+                                             parameters = params)
+
+                        clf.fit(exog = self.X, med = self.M, endog = self.Y)
+                        estimates = clf.indirect_effect()
+                        self.assertTrue(estimates[0] > self.TRUE_ab - self.EPS and estimates[0] < self.TRUE_ab + self.EPS)
+
+
+    # Test fully Bayesian method
     def test_bayes(self):
-        pass
+        print('\nTesting fully Bayesian method...\n')
 
-"""
-    # Delta method (first-order)
-    clf = MediationModel(method = 'delta', interval = 'first', mediator_type = 'continuous',
-                         endogenous_type = 'continuous', plot = False)
-    clf.fit(exog = x, med = m, endog = y)
-    print(clf.indirect_effect())
-    clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
+        # Define lists of interest
+        methods = ['bayes-norm', 'bayes-robust']
+        intervals = ['cred', 'hpd']
+        estimator = ['mean', 'median']
+        med_types = ['continuous', 'categorical']
+        end_types = ['continuous', 'categorical']
 
-    # Delta method (second-order)
-    clf = MediationModel(method = 'delta', interval = 'second', mediator_type = 'continuous',
-                         endogenous_type = 'continuous', plot = False)
-    clf.fit(exog = x, med = m, endog = y)
-    print(clf.indirect_effect())
-    clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
+        for method in methods:
+            for est in estimator:
+                for interval in intervals:
+                    for med_type in med_types:
+                        for end_type in end_types:
+                            self._simulate_data(mediator_type = med_type, endogenous_type = end_type)
+                            params = {'iter': 10000, 
+                                      'burn': 5000, 
+                                      'thin': 1,
+                                      'estimator': est, 
+                                      'n_chains': 1, 
+                                      'standardize': False}
+                            clf = MediationModel(method = method, 
+                                                 interval = interval, 
+                                                 mediator_type = med_type,
+                                                 endogenous_type = end_type,
+                                                 parameters = params)
 
-    # Fully Bayesian method with normal priors (HPD intervals)
-    params = {'iter': 10000, 'burn': 500, 'thin': 1, 'n_chains': 2, 'estimator': 'mean'}
-    clf = MediationModel(method = 'bayes-norm', interval = 'hpd', mediator_type = 'continuous', 
-                         endogenous_type = 'continuous', plot = True, parameters = params)
-    clf.fit(exog = x, med = m, endog = y)
-    print(clf.indirect_effect())
-    clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
-    clf.plot_indirect()
+                            clf.fit(exog = self.X, med = self.M, endog = self.Y)
+                            estimates = clf.indirect_effect()
+                            self.assertTrue(estimates[0] > self.TRUE_ab - self.EPS and estimates[0] < self.TRUE_ab + self.EPS)
 
-    # Fully Bayesian method with robust priors (HPD intervals)
-    params = {'iter': 10000, 'burn': 500, 'thin': 1, 'n_chains': 2, 'estimator': 'mean', 'standardize': True}
-    clf = MediationModel(method = 'bayes-robust', interval = 'cred', mediator_type = 'continuous', 
-                         endogenous_type = 'continuous', plot = True, parameters = params)
-    clf.fit(exog = x, med = m, endog = y)
-    print(clf.indirect_effect())
-    clf.summary(exog_name = 'depression', med_name = 'alcohol', endog_name = 'drugabuse')
-    clf.plot_indirect()
-"""
+
 if __name__ == "__main__":
     unittest.main()

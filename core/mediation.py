@@ -75,7 +75,7 @@ class MediationModel(object):
             - estimator : str
                 Estimator for indirect effect. Currently supports 'sample', 'mean', and 'median'
 
-        Expected keys for method = 'bayes-norm' or methd = 'bayes-robust'
+        Expected keys for method = 'bayes-norm' or method = 'bayes-robust'
             - iter : int
                 Number of simulations for MCMC sampler
             - burn : int
@@ -86,6 +86,8 @@ class MediationModel(object):
                 Estimator for indirect effect. Currently supports 'mean' and 'median'
             - n_chains : int
                 Number of chains to run
+            - standardize : boolean
+                Whether to standardize variables for robust (Cauchy) priors
             - check_convergence : boolean
                 Run standard tests for convergence
 
@@ -164,9 +166,12 @@ class MediationModel(object):
 
 
     def _standardize(self, exog = None, med = None, endog = None):
-        """Standardizes continuous variables to have mean 0, sd = 0.5 and binary variables to be mean
+        """Standardizes continuous variables to have mean 0, sd = 0.5 and binary input variables to be mean
         centered (assumes a 0/1 coding scheme). This scaling is the recommended standardization for
-        Bayesian analysis with robust (Cauchy) priors
+        Bayesian analysis with robust (Cauchy) priors. 
+
+        NOTE: Do not standardize binary mediator or endogenous variables because values cannot be used in 
+              logistic regression
 
         Parameters
         ----------
@@ -190,6 +195,8 @@ class MediationModel(object):
         endog_std : 1d array-like
             Standardized endogenous variable
         """
+        assert(self.method == 'bayes-robust'), "Method should be bayes-robust for this scaling"
+
         # Standardize exogenous variable
         exog_vals = np.unique(exog)
         if len(exog_vals) == 2 and 0 in exog_values and 1 in exog_values:
@@ -198,16 +205,16 @@ class MediationModel(object):
             exog_std = (exog - np.mean(exog))/(2*np.std(exog))
         
         # Standardize mediator variable
-        if self.mediator_type == 'categorical':
-            med_std = med - np.mean(med)
-        else:
+        if self.mediator_type == 'continuous':
             med_std = (med - np.mean(med))/(2*np.std(med))
+        else:
+            med_std = med
 
         # Standardize endogenous variable
-        if self.endogenous_type == 'categorical':
-            endog_std = endog - np.mean(endog)
-        else:
+        if self.endogenous_type == 'continuous':
             endog_std = (endog - np.mean(endog))/(2*np.std(endog)) 
+        else:
+            endog_std = endog
 
         return exog_std, med_std, endog_std      
 
@@ -381,7 +388,8 @@ class MediationModel(object):
             response_M = pm.Normal('response_M', mu = expected_med, tau = tau_M, value = med, observed = True)
             med_model = [i_M, a, tau_M, response_M]
         else:
-            response_M = pm.Bernoulli('response_M', value = med, p = pm.invlogit(expected_med), observed = True) 
+            p = pm.InvLogit('p', expected_med)
+            response_M = pm.Bernoulli('response_M', value = med, p = p, observed = True) 
             med_model = [i_M, a, response_M]
 
         if self.endogenous_type == 'continuous':
@@ -389,7 +397,8 @@ class MediationModel(object):
             response_Y = pm.Normal('response_Y', mu = expected_endog, tau = tau_Y, value = endog, observed = True)
             endog_model = [i_Y, b, c, tau_Y, response_Y]
         else:
-            response_Y = pm.Bernoulli('response_Y', value = endog, p = pm.invlogit(expected_endog), observed = True)   
+            p = pm.InvLogit('p', expected_endog)
+            response_Y = pm.Bernoulli('response_Y', value = endog, p = p, observed = True)   
             endog_model = [i_Y, b, c, response_Y]         
 
         # Build MCMC model and estimate model
@@ -541,8 +550,8 @@ class MediationModel(object):
 
         Parameters
         ----------
-        ab_estimates : SORTED numpy array with dimensions = [b1, 1]
-            Array with ab estimates based on bootstrap or Bayesian method
+        ab_estimates : SORTED 1d array-like
+            Array with bootstrap estimates for each sample
 
         Returns
         -------
@@ -569,8 +578,8 @@ class MediationModel(object):
 
         Parameters
         ----------
-        ab_estimates : numpy array with dimensions = [b1, 1]
-            Array with ab estimates based on bootstrap or Bayesian method
+        ab_estimates : 1d array-like
+            Array with bootstrap estimates for each sample
 
         Returns
         -------
