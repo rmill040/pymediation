@@ -1,14 +1,12 @@
 #!/usr/bin/env python
-
 from __future__ import division, print_function
 
 from mpi4py import MPI
 import numpy as np
 import os
 import sys
-import timeit
 
-from ..core.mediation import MediationModel
+from mediation import MediationModel
 
 
 # Convert linear combination to binomial random variable
@@ -19,9 +17,6 @@ def linear_to_binomial(x = None, n = None):
 
 # Main simulation function
 def simulation(iterations = None, rank = None):
-
-	# Start timer and simulation counter
-	local_start = timeit.default_timer()
 
 	# Sample sizes
 	sample_sizes = [50, 100, 200, 500, 1000]
@@ -41,13 +36,16 @@ def simulation(iterations = None, rank = None):
 	
 	# Fully Bayesian methods
 	bayes_methods = ['bayes-norm', 'bayes-robust']
+	its = 20000
+	burn = its/2
 
 	# Different estimators
 	bayesboot_estimators = ['sample', 'mean', 'median']
 	bayes_estimators = ['mean', 'median']
 
 	# Bootstrap parameters
-	boot_params = {'boot_samples': 5000, 'estimator': 'sample'}
+	boot_samples = 5000
+	boot_params = {'boot_samples': boot_samples, 'estimator': 'sample'}
 
 	# Loop through parameters
 	results = []
@@ -56,6 +54,8 @@ def simulation(iterations = None, rank = None):
 			for b in b_list:
 				for variable in variable_type:
 					for i in xrange(iterations):
+
+						print('Sample {0} | a {1} | b {2} | type {3} | iteration {4}\n'.format(N, a, b, variable, i))
 
 						# Exogenous variable
 						X = np.random.normal(0, 1, (N, 1))	
@@ -78,7 +78,6 @@ def simulation(iterations = None, rank = None):
 
 						# Delta methods
 						for interval in delta_interval:
-							print(interval)
 							clf = MediationModel(method = 'delta',
 												 interval = interval, 
 												 mediator_type = variable,
@@ -123,10 +122,10 @@ def simulation(iterations = None, rank = None):
 
 						# Bayesian bootstrap methods
 						for interval in bayes_interval:
-							b2_list = [N, 10*N, 5000]
+							b2_list = [N, 10*N, boot_samples]
 							for b2 in b2_list:
 								for estimator in bayesboot_estimators:
-									bayesboot_params = {'boot_samples': 5000, 'resample_size': b2, 'estimator': estimator}
+									bayesboot_params = {'boot_samples': boot_samples, 'resample_size': b2, 'estimator': estimator}
 									clf = MediationModel(method = 'bayesboot',
 														 interval = interval, 
 														 mediator_type = variable,
@@ -151,7 +150,7 @@ def simulation(iterations = None, rank = None):
 						for method in bayes_methods:
 							for interval in bayes_interval:
 								for estimator in bayes_estimators:
-									bayes_params = {'iter': 20000, 'burn': 10000, 'thin': 1, 'estimator': estimator, 'n_chains': 1}
+									bayes_params = {'iter': its, 'burn': burn, 'thin': 1, 'estimator': estimator, 'n_chains': 1}
 									clf = MediationModel(method = method,
 														 interval = interval, 
 														 mediator_type = variable,
@@ -172,8 +171,9 @@ def simulation(iterations = None, rank = None):
 													estimates[1], 	# LL estimate
 													estimates[2]])	# UL estimate
 	# Concatenate results together
-	results = vstack((results))
-	np.savetxt('worker_' + str(rank) + '.txt', delimiter = ',', fmt = "%s")
+	results = np.vstack((results))
+	file = 'worker_' + str(rank) + '.txt'
+	np.savetxt(file, results, delimiter = ',', fmt = "%s")
 
 def main():
 
@@ -188,6 +188,4 @@ def main():
 	simulation(iterations = int(sys.argv[1]), rank = rank)
 
 if __name__ == "__main__":
-	time_start = timeit.default_timer()
 	main()
-	print('Simulation finished in {0} hours'.format((timeit.default_timer() - time_start))/3600)

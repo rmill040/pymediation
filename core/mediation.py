@@ -102,7 +102,7 @@ class MediationModel(object):
         _valid_bool = [True, False]
         _valid_var = ['continuous', 'categorical']
         _valid_methods = ['delta', 'boot', 'bayesboot', 'bayes-norm', 'bayes-robust']
-        _valid_interval = ['perc', 'bc', 'cred', 'hpd']
+        _valid_interval = ['first', 'second', 'perc', 'bc', 'cred', 'hpd']
 
         # Define global variables
         if method in _valid_methods:
