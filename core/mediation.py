@@ -102,6 +102,7 @@ class MediationModel(object):
         _valid_bool = [True, False]
         _valid_var = ['continuous', 'categorical']
         _valid_methods = ['delta', 'boot', 'bayesboot', 'bayes-norm', 'bayes-robust']
+        _valid_interval = ['perc', 'bc', 'cred', 'hpd']
 
         # Define global variables
         if method in _valid_methods:
@@ -109,17 +110,20 @@ class MediationModel(object):
         else:
             raise ValueError('%s not a valid method; valid methods are %s' % (method, _valid_methods))
 
-        self.interval = interval
+        if interval in _valid_interval:
+            self.interval = interval
+        else:
+            raise ValueError('%s not a valid interval; valid intervals are %s' % (interval, _valid_interval))
 
         if mediator_type in _valid_var:
             self.mediator_type = mediator_type
         else:
-            raise ValueError('%s not a valid mediator type' % mediator_type)
+            raise ValueError('%s not a valid mediator type; valid types are %s' % (mediator_type, _valid_var))
 
         if endogenous_type in _valid_var:
             self.endogenous_type = endogenous_type
         else:
-            raise ValueError('%s not a valid endogenous type' % endogenous_type)
+            raise ValueError('%s not a valid endogenous type; valid types are %s' % (endogenous_type, _valid_var))
 
         if alpha <= 0 or alpha >= 1:
             raise ValueError('%.3f is not a valid value for alpha; should be in interval (0, 1)' % alpha)
@@ -312,8 +316,11 @@ class MediationModel(object):
             clf_mediator = linear_model.LogisticRegression(fit_intercept = False)
 
         # Estimate model and get coefficients
-        clf_mediator.fit(design_m, m.ravel())
-        beta_m = clf_mediator.coef_.reshape(2,)
+        try:
+            clf_mediator.fit(design_m, m.ravel())
+            beta_m = clf_mediator.coef_.reshape(2,)
+        except:
+            beta_m = np.array([np.nan, np.nan])
             
         # Endogenous variable model
         if self.endogenous_type == 'continuous':
@@ -322,8 +329,11 @@ class MediationModel(object):
             clf_endogenous = linear_model.LogisticRegression(fit_intercept = False)
 
         # Estimate model and get coefficients
-        clf_endogenous.fit(design_y, y.ravel())
-        beta_y = clf_endogenous.coef_.reshape(3,)
+        try:
+            clf_endogenous.fit(design_y, y.ravel())
+            beta_y = clf_endogenous.coef_.reshape(3,)
+        except:
+            beta_y = np.array([np.nan, np.nan, np.nan])
 
         # Save estimates for calculations
         a = beta_m[1]
@@ -656,6 +666,14 @@ class MediationModel(object):
                 ab_estimates[i] = self._point_estimate(m = self.m[idx], design_m = self.design_m[idx], 
                                                        y = self.y[idx], design_y = self.design_y[idx])
 
+        # Check to make sure ab_estimates does not contain np.nan values (failed bootstrap samples)
+        if np.any(np.isnan(ab_estimates)):
+            self.boot_failed = np.sum(np.isnan(ab_estimates))
+            ab_estimates = ab_estimates[~np.isnan(ab_estimates)]
+        else:
+            self.boot_failed = 0
+
+        # Save estimates if plotting
         if self.plot:
             self.ab_estimates = ab_estimates
 
@@ -863,8 +881,8 @@ class MediationModel(object):
             med_name = 'M'
             endog_name = 'Y'
             print('{0:<20}{1:<14}'.format('Exogenous:', exog_name))
-            print('{0:<20}{1:<14}'.format('Mediator:', exog_name))
-            print('{0:<20}{1:<14}'.format('Endogenous:', exog_name))
+            print('{0:<20}{1:<14}'.format('Mediator:', med_name))
+            print('{0:<20}{1:<14}'.format('Endogenous:', endog_name))
 
         print('\n{0:<20}{1:<14}'.format('Mediator Model:', med_model))
         print('{0:<20}{1:<14}'.format('Endogenous Model:', endog_model))
@@ -877,6 +895,7 @@ class MediationModel(object):
 
         if self.method in ['boot', 'bayesboot']:
             print('{0:<20}{1:<3}'.format('Boot Samples:', self.parameters['boot_samples']))
+            print('{0:<20}{1:<3}'.format('Failed Samples:', self.boot_failed))
             if self.method == 'bayesboot':
                 print('{0:<20}{1:<3}'.format('Resample Size:', self.parameters['resample_size']))
                 print('{0:<20}{1:<10}'.format('Estimator:', self.parameters['estimator']))
@@ -910,7 +929,7 @@ class MediationModel(object):
             sig = 'Yes'
         else:
             sig = 'No'
-        print('{path:<12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = ' %s -> %s' % (exog_name, med_name),
+        print('{path:^12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = ' %s -> %s' % (exog_name, med_name),
                                                                                          coef = 'a',
                                                                                          point = self.all_paths['a'],
                                                                                          ll = self.all_paths['ci_a'][0],
@@ -921,7 +940,7 @@ class MediationModel(object):
             sig = 'Yes'
         else:
             sig = 'No'
-        print('{path:<12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = ' %s -> %s' % (med_name, endog_name),
+        print('{path:^12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = ' %s -> %s' % (med_name, endog_name),
                                                                                          coef = 'b',
                                                                                          point = self.all_paths['b'],
                                                                                          ll = self.all_paths['ci_b'][0],
@@ -932,7 +951,7 @@ class MediationModel(object):
             sig = 'Yes'
         else:
             sig = 'No'
-        print('{path:<12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = ' %s -> %s' % (exog_name, endog_name),
+        print('{path:^12}{coef:^12}{point:^12.4f}{ll:^12.4f}{ul:^12.4f}{sig:^12}'.format(path = ' %s -> %s' % (exog_name, endog_name),
                                                                                          coef = 'c',
                                                                                          point = self.all_paths['c'],
                                                                                          ll = self.all_paths['ci_c'][0],
