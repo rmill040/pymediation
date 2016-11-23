@@ -143,7 +143,8 @@ class MediationModel(object):
 
 
     # ..helper functions (all start with underscore _)
-    def _bayes_probs(self, n = None):
+    @staticmethod
+    def _bayes_probs(n = None):
         """Draw Bayesian bootstrap probabilities
 
         Parameters
