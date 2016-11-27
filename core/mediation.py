@@ -4,12 +4,28 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from patsy import dmatrices
-import pymc as pm
 import scipy.stats
 from sklearn import linear_model
 import statsmodels.api as sm
 import warnings
 warnings.filterwarnings("ignore")
+
+try:
+    import pymc3 as pm
+    backend = 'pymc3'
+    print('Backend pymc3')
+except:
+    warnings.warn('pymc3 not available, attempting to import pymc')
+    try:
+        import pymc as pm
+        backend = 'pymc'
+        print('Backend pymc')
+        warnings.warn('pymc3 not available, using pymc instead')
+    except:
+        backend = None
+        print('Backend None')
+        warnings.warn('pymc3 and pymc not available; unable to use fully Bayesian methods')
+
 
 __all__ = ["MediationModel"]
 
@@ -59,7 +75,7 @@ class MediationModel(object):
         bootstrap or Bayesian estimation.
 
     parameters : dict
-        Dictionary of parameters for different estimation methods.
+        Dictionary of parameters for different estimation methods
 
         Expected keys for method = 'boot'
             - boot_samples : int
@@ -88,8 +104,10 @@ class MediationModel(object):
                 Number of chains to run
             - standardize : boolean
                 Whether to standardize variables for robust (Cauchy) priors
-            - check_convergence : boolean
-                Run standard tests for convergence
+
+    backend : str
+        Backend for fully Bayesian methods. Currently supports 'pymc3' (recommended), 'pymc', and None
+
 
     Returns
     -------
@@ -97,7 +115,7 @@ class MediationModel(object):
         Instance of MediationModel class
     """
     def __init__(self, method = None, interval = None, mediator_type = None, endogenous_type = None, 
-                 alpha = .05, plot = False, parameters = None):
+                 alpha = .05, plot = False, parameters = None, backend = 'pymc3'):
 
         _valid_bool = [True, False]
         _valid_var = ['continuous', 'categorical']
@@ -131,18 +149,66 @@ class MediationModel(object):
             self.alpha = alpha
 
         if plot in _valid_bool:
-            self.plot = plot
+			self.plot = plot
         else:
             raise ValueError('%s not a valid value for plot; should be a boolean argument' % plot)
 
         if parameters is not None:
             assert(isinstance(parameters, dict) == True), 'parameters argument should be a dictionary'
-        self.parameters = parameters
+        else:
+            parameters = {}
+
+        self.parameters = self._check_parameters(parameters)
 
         self.fit_ran = False
 
 
     # ..helper functions (all start with underscore _)
+    def _check_parameters(self, parameters):
+        """Check keys in parameters and set to default values if none provided
+
+        Parameters
+        ----------
+        parameters : dict
+        	Dictionary of parameters for different estimation methods
+
+        Returns
+        -------
+        parameters : dict
+            Dictionary of parameters for different estimation methods with default values if none provided
+        """
+        # Bootstrap methods
+        if self.method in ['boot', 'bayes-boot']:
+        	if 'boot_samples' not in parameters:
+        		parameters['boot_samples'] = 1000
+        	if self.method == 'boot':
+        		if 'estimator' not in parameters:
+        			parameters['estimator'] = 'sample'
+        		else:
+        			if 'estimator' not in parameters:
+        				parameters['estimator'] = 'mean'
+        			if 'resample_size' not in parameters:
+        				parameters['resample_size'] = parameters.get('boot_samples')
+
+        # Fully Bayesian methods
+        elif self.method in ['bayes-norm', 'bayes-robust']:
+        	if 'iter' not in parameters:
+        		parameters['iter'] = 20000
+        	if 'burn' not in parameters:
+        		parameters['burn'] = int(parameters.get('iter')/2)
+        	if 'thin' not in parameters:
+        		parameters['thin'] = 1
+        	if 'n_chains' not in parameters:
+        		parameters['n_chains'] = 1
+        	if 'estimator' not in parameters:
+        		parameters['estimator'] = 'mean'
+
+        else: # Ignore parameters for delta methods
+        	pass
+
+        return parameters
+
+
     @staticmethod
     def _bayes_probs(n = None):
         """Draw Bayesian bootstrap probabilities
@@ -157,7 +223,6 @@ class MediationModel(object):
         probs : numpy array with dimension = [n]
             Array of Bayesian bootstrap probabilities to use for resampling data
         """
-
         # Random uniform draws
         u = np.random.uniform(low = 0, high = 1, size = n - 1)
 
@@ -168,6 +233,22 @@ class MediationModel(object):
         # Sort and calculate first-order differences
         u.sort()
         return np.diff(u)
+
+    @staticmethod
+    def _invlogit(var = None):
+        """Inverse logit transform
+
+        Parameters
+        ----------
+        var : 1d array-like
+            Array of inputs to be transformed
+
+        Returns
+        -------
+        probs : 1d array-like
+            Array with inverse logit applied to each element
+        """
+        return np.exp(var) / (1 + np.exp(var))
 
 
     def _standardize(self, exog = None, med = None, endog = None):
@@ -344,8 +425,10 @@ class MediationModel(object):
         return a*b
 
 
-    def _bayes_method(self, exog = None, med = None, endog = None):
-        """Estimate indirect effect and intervals with fully Bayesian model
+    def _pymc_bayes_method(self, exog = None, med = None, endog = None):
+        """Estimate indirect effect and intervals with fully Bayesian model (pymc as backend).
+           Default sampler is Metropolis for all parameters --> Convergence is often challenging with this sampler
+           Better to use pymc3 as backend
 
         Parameters
         ----------
@@ -368,7 +451,7 @@ class MediationModel(object):
         if self.method == 'bayes-norm':
             # Mediator model: M ~ i_M + a*X
             i_M = pm.Normal('i_M', mu = 0, tau = 1e-10, value = 0)
-            a = pm.Normal('a1', mu = 0, tau = 1e-10, value = 0)
+            a = pm.Normal('a', mu = 0, tau = 1e-10, value = 0)
 
             # Endogenous model: Y ~ i_Y + c*X + b*M
             i_Y = pm.Normal('i_Y', mu = 0, tau = 1e-10, value = 0)
@@ -378,7 +461,7 @@ class MediationModel(object):
         else:
            # Mediator model: M ~ i_M + a*X
             i_M = pm.Cauchy('i_M', alpha = 0, beta = 10, value = 0)
-            a = pm.Cauchy('a1', alpha = 0, beta = 2.5, value = 0)    
+            a = pm.Cauchy('a', alpha = 0, beta = 2.5, value = 0)    
 
             # Endogenous model: Y ~ i_Y + c*X + b*M
             i_Y = pm.Cauchy('i_Y', alpha = 0, beta = 10, value = 0)
@@ -399,8 +482,8 @@ class MediationModel(object):
             response_M = pm.Normal('response_M', mu = expected_med, tau = tau_M, value = med, observed = True)
             med_model = [i_M, a, tau_M, response_M]
         else:
-            p = pm.InvLogit('p', expected_med)
-            response_M = pm.Bernoulli('response_M', value = med, p = p, observed = True) 
+            p_M = pm.InvLogit('p_M', expected_med)
+            response_M = pm.Bernoulli('response_M', value = med, p = p_M, observed = True) 
             med_model = [i_M, a, response_M]
 
         if self.endogenous_type == 'continuous':
@@ -408,24 +491,147 @@ class MediationModel(object):
             response_Y = pm.Normal('response_Y', mu = expected_endog, tau = tau_Y, value = endog, observed = True)
             endog_model = [i_Y, b, c, tau_Y, response_Y]
         else:
-            p = pm.InvLogit('p', expected_endog)
-            response_Y = pm.Bernoulli('response_Y', value = endog, p = p, observed = True)   
+            p_Y = pm.InvLogit('p_Y', expected_endog)
+            response_Y = pm.Bernoulli('response_Y', value = endog, p = p_Y, observed = True)   
             endog_model = [i_Y, b, c, response_Y]         
 
-        # Build MCMC model and estimate model
-        bayes_model = pm.Model(med_model + endog_model)
-        mcmc = pm.MCMC(bayes_model)
-
+        # Build MCMC mediator model and estimate model
+        med_model = pm.Model(med_model)
+        med_mcmc = pm.MCMC(med_model)
+        
         # Run multiple chains if specified
         for i in xrange(self.parameters['n_chains']):
-            mcmc.sample(iter = self.parameters['iter'], 
-                        burn = self.parameters['burn'], 
-                        thin = self.parameters['thin'], 
-                        progress_bar = False)
+            med_mcmc.sample(iter = self.parameters['iter'], 
+                            burn = self.parameters['burn'], 
+                            thin = self.parameters['thin'], 
+                            progress_bar = False)
+
+        # Build MCMC endogenous model and estimate model
+        endog_model = pm.Model(endog_model)
+        endog_mcmc = pm.MCMC(endog_model)
+        for i in xrange(self.parameters['n_chains']):
+            endog_mcmc.sample(iter = self.parameters['iter'], 
+                              burn = self.parameters['burn'], 
+                              thin = self.parameters['thin'], 
+                              progress_bar = False)
 
         # Get posterior distribution of a and b then create indirect effect
         a_path = a.trace(chain = None)
         b_path = b.trace(chain = None)
+        ab_estimates = a_path*b_path
+
+        # If plotting distribution of ab
+        if self.plot:
+            self.ab_estimates = a_path*b_path
+
+        # Point estimate
+        if self.parameters['estimator'] == 'mean':
+            indirect['point'] = np.mean(ab_estimates)
+        else:
+            indirect['point'] = np.median(ab_estimates)
+
+        # Interval estimate
+        if self.interval == 'cred':
+            indirect['ci'] = self._boot_interval(ab_estimates = ab_estimates)
+        else:
+            indirect['ci'] = self._hpd_interval(ab_estimates = ab_estimates)
+        return indirect
+
+
+    def _pymc3_bayes_method(self, exog = None, med = None, endog = None):
+        """Estimate indirect effect and intervals with fully Bayesian model (pymc3 as backend)
+
+        Parameters
+        ----------
+        exog : 1d array-like
+            Exogenous variable
+
+        med :1d array-like
+            Mediator variable
+
+        endog : 1d array-like
+            Endogenous variable
+
+        Returns
+        -------
+        indirect : dictionary
+            Dictionary containing: (1) point estimate, (2) interval estimates
+        """
+        indirect = {}
+
+        # Standardize data if specified
+        if 'standardize' in self.parameters:    # Check if key exists rather than throw error if omitted
+            if self.parameters['standardize']:
+                exog, med, endog = self._standardize(exog = exog, med = med, endog = endog)
+
+        # Mediator model: M ~ i_M + a*X
+        with pm.Model() as med_mcmc:
+
+            # Define priors
+            if self.method == 'bayes-norm':
+                i_M = pm.Normal('i_M', mu = 0, tau = 1e-10)
+                a = pm.Normal('a', mu = 0, tau = 1e-10)
+            else:
+                i_M = pm.Cauchy('i_M', alpha = 0, beta = 10)
+                a = pm.Cauchy('a', alpha = 0, beta = 2.5)    
+
+            # Expected values (linear combos)
+            expected_med = i_M + a*exog
+
+            # Define likelihood
+            if self.mediator_type == 'continuous':
+                tau_M = pm.Gamma('tau_M', alpha = .001, beta = .001)
+                response_M = pm.Normal('response_M', mu = expected_med, tau = tau_M, observed = med)
+            
+            else:
+                p_M = self._invlogit(expected_med)
+                response_M = pm.Binomial('response_M', n = 1, p = p_M, observed = med)
+
+            # Fit model
+            start = pm.find_MAP()
+            trace_M = pm.sample(draws = self.parameters['iter'], 
+                                chain = self.parameters['n_chains'], 
+                                step = pm.NUTS(scaling = start),
+                                start = start,
+                                progressbar = False)
+            a_path = trace_M.get_values('a', burn = self.parameters['burn'], thin = self.parameters['thin'], combine = True)
+
+
+        # Endogenous model: Y ~ i_Y + c*X + b*M
+        with pm.Model() as endog_mcmc:
+            # Define priors
+            if self.method == 'bayes-norm':
+                i_Y = pm.Normal('i_Y', mu = 0, tau = 1e-10)
+                c = pm.Normal('c', mu = 0, tau = 1e-10)
+                b = pm.Normal('b', mu = 0, tau = 1e-10)
+            
+            else:
+                i_Y = pm.Cauchy('i_Y', alpha = 0, beta = 10)
+                c = pm.Cauchy('c', alpha = 0, beta = 2.5)
+                b = pm.Cauchy('b', alpha = 0, beta = 2.5) 
+
+            # Expected values (linear combos)
+            expected_endog = i_Y + c*exog + b*med
+
+            # Define likelihood
+            if self.endogenous_type == 'continuous':
+                tau_Y = pm.Gamma('tau_Y', alpha = .001, beta = .001)
+                response_Y = pm.Normal('response_Y', mu = expected_endog, tau = tau_Y, observed = endog)
+            
+            else:
+                p_Y = self._invlogit(expected_endog)
+                response_Y = pm.Binomial('response_Y', n = 1, p = p_Y, observed = endog)
+
+            # Fit model
+            start = pm.find_MAP()
+            trace_Y = pm.sample(draws = self.parameters['iter'], 
+                                chain = self.parameters['n_chains'], 
+                                step = pm.NUTS(scaling = start),
+                                start = start,
+                                progressbar = False)
+            b_path = trace_Y.get_values('b', burn = self.parameters['burn'], thin = self.parameters['thin'], combine = True)
+
+        # Get posterior distribution of a and b then create indirect effect
         ab_estimates = a_path*b_path
 
         # If plotting distribution of ab
@@ -779,7 +985,12 @@ class MediationModel(object):
         elif self.method in ['boot', 'bayesboot']:
             self.indirect = self._boot_method()
         else:
-            self.indirect = self._bayes_method(exog = exog, med = med, endog = endog)
+            if backend == 'pymc3':
+                self.indirect = self._pymc3_bayes_method(exog = exog, med = med, endog = endog)
+            elif backend == 'pymc':
+                self.indirect = self._pymc_bayes_method(exog = exog, med = med, endog = endog)
+            else:
+                raise ValueError('fully Bayesian methods not available due to import errors with pymc3 and pymc')
         self.fit_ran = True
 
 
@@ -970,6 +1181,7 @@ class MediationModel(object):
                                                                                            ul = self.indirect['ci'][1],
                                                                                            sig = sig))
         print('{:-^71}'.format(''))
+
 
     def plot_indirect(self):
         """Plot histogram of bootstrap or posterior distribution of indirect effect
