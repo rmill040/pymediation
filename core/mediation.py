@@ -15,16 +15,15 @@ try:
     backend = 'pymc3'
     print('Backend pymc3')
 except:
-    warnings.warn('pymc3 not available, attempting to import pymc')
+    print('pymc3 not available, attempting to import pymc')
     try:
         import pymc as pm
         backend = 'pymc'
         print('Backend pymc')
-        warnings.warn('pymc3 not available, using pymc instead')
     except:
         backend = None
+        print('pymc3 and pymc not available; unable to use fully Bayesian methods')
         print('Backend None')
-        warnings.warn('pymc3 and pymc not available; unable to use fully Bayesian methods')
 
 
 __all__ = ["MediationModel"]
@@ -193,7 +192,7 @@ class MediationModel(object):
         # Fully Bayesian methods
         elif self.method in ['bayes-norm', 'bayes-robust']:
         	if 'iter' not in parameters:
-        		parameters['iter'] = 20000
+        		parameters['iter'] = 10000
         	if 'burn' not in parameters:
         		parameters['burn'] = int(parameters.get('iter')/2)
         	if 'thin' not in parameters:
@@ -1196,6 +1195,7 @@ class MediationModel(object):
         """
         # Error checking
         assert(self.fit_ran == True), 'Need to run .fit() method before generating histogram'
+        assert(self.plot == True and hasattr(clf, 'ab_estimates')), 'Need to specify plot == True in constructor function to enable plotting'
         if self.method == 'delta':
             raise ValueError('Plotting not available for multivariate delta method')
         
