@@ -96,7 +96,7 @@ class MediationModel(object):
             - burn : int
                 Number of burn-in samples
             - thin : int
-                Factor to thin chain by
+                Factor by which to thin chain
             - estimator : str
                 Estimator for indirect effect. Currently supports 'mean' and 'median'
             - n_chains : int
@@ -177,17 +177,14 @@ class MediationModel(object):
             Dictionary of parameters for different estimation methods with default values if none provided
         """
         # Bootstrap methods
-        if self.method in ['boot', 'bayes-boot']:
-        	if 'boot_samples' not in parameters:
-        		parameters['boot_samples'] = 1000
-        	if self.method == 'boot':
-        		if 'estimator' not in parameters:
-        			parameters['estimator'] = 'sample'
-        		else:
-        			if 'estimator' not in parameters:
-        				parameters['estimator'] = 'mean'
-        			if 'resample_size' not in parameters:
-        				parameters['resample_size'] = parameters.get('boot_samples')
+        if self.method in ['boot', 'bayesboot']:
+            if 'boot_samples' not in parameters:
+                parameters['boot_samples'] = 2000
+            if 'estimator' not in parameters:
+                parameters['estimator'] = 'sample'
+        	if self.method == 'bayesboot':
+    			if 'resample_size' not in parameters:
+    				parameters['resample_size'] = parameters.get('boot_samples')
 
         # Fully Bayesian methods
         elif self.method in ['bayes-norm', 'bayes-robust']:
@@ -232,6 +229,7 @@ class MediationModel(object):
         # Sort and calculate first-order differences
         u.sort()
         return np.diff(u)
+
 
     @staticmethod
     def _invlogit(var = None):
