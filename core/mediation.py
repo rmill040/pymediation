@@ -352,11 +352,11 @@ class MediationModel(object):
 
         # First-order approximation
         if self.interval == 'first':
-            MM_var = b**2*var_a + a**2*var_b
+            MM_var = (b**2)*var_a + (a**2)*var_b
 
         # Second-order approximation
         else:
-            MM_var = b**2*var_a + a**2*var_b + var_a*var_b
+            MM_var = (b**2)*var_a + (a**2)*var_b + var_a*var_b
 
         # Compute 100(1 - alpha)% CI
         z_score = scipy.stats.norm.ppf(1 - self.alpha/2)
