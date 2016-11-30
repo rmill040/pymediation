@@ -28,6 +28,7 @@ except:
 
 __all__ = ["MediationModel"]
 
+#TODO: ADD SAVING MODEL OPTION FOR PYMC3 BACKEND
 
 class MediationModel(object):
     """ Estimates an unconditional indirect effect based on a simple mediation model:
@@ -101,12 +102,10 @@ class MediationModel(object):
                 Estimator for indirect effect. Currently supports 'mean' and 'median'
             - n_chains : int
                 Number of chains to run
-            - standardize : boolean
+            - standardize : boolean (optional)
                 Whether to standardize variables for robust (Cauchy) priors
-
-    backend : str
-        Backend for fully Bayesian methods. Currently supports 'pymc3' (recommended), 'pymc', and None
-
+            - save_models : boolean (optional)
+                Whether to save model for further analysis (e.g., convergence testing)
 
     Returns
     -------
@@ -114,7 +113,7 @@ class MediationModel(object):
         Instance of MediationModel class
     """
     def __init__(self, method = None, interval = None, mediator_type = None, endogenous_type = None, 
-                 alpha = .05, plot = False, parameters = None, backend = 'pymc3'):
+                 alpha = .05, plot = False, parameters = None):
 
         _valid_bool = [True, False]
         _valid_var = ['continuous', 'categorical']
@@ -424,8 +423,8 @@ class MediationModel(object):
 
     def _pymc_bayes_method(self, exog = None, med = None, endog = None):
         """Estimate indirect effect and intervals with fully Bayesian model (pymc as backend).
-           Default sampler is Metropolis for all parameters --> Convergence is often challenging with this sampler
-           Better to use pymc3 as backend
+           Default sampler is Slice sampling for all parameters
+           Better to use pymc3 as backend if convergence problems appear since it uses NUTS sampler
 
         Parameters
         ----------
@@ -445,6 +444,12 @@ class MediationModel(object):
         """
         indirect = {}
 
+        # Standardize data if specified
+        if 'standardize' in self.parameters:    # Check if key exists rather than throw error if omitted
+            if self.parameters['standardize']:
+                exog, med, endog = self._standardize(exog = exog, med = med, endog = endog)
+
+        # Priors
         if self.method == 'bayes-norm':
             # Mediator model: M ~ i_M + a*X
             i_M = pm.Normal('i_M', mu = 0, tau = 1e-10, value = 0)
@@ -464,11 +469,6 @@ class MediationModel(object):
             i_Y = pm.Cauchy('i_Y', alpha = 0, beta = 10, value = 0)
             c = pm.Cauchy('c', alpha = 0, beta = 2.5, value = 0)
             b = pm.Cauchy('b', alpha = 0, beta = 2.5, value = 0) 
-
-        # Standardize data if specified
-        if 'standardize' in self.parameters:    # Check if key exists rather than throw error if omitted
-            if self.parameters['standardize']:
-                exog, med, endog = self._standardize(exog = exog, med = med, endog = endog)
 
         # Expected values (linear combos)
         expected_med = i_M + a*exog
@@ -495,7 +495,13 @@ class MediationModel(object):
         # Build MCMC mediator model and estimate model
         med_model = pm.Model(med_model)
         med_mcmc = pm.MCMC(med_model)
-        
+
+        # Specify samplers for mediator model (slice sampling)
+        med_mcmc.use_step_method(pm.Slicer, a, w = 10, m = 10000, doubling = True)
+        med_mcmc.use_step_method(pm.Slicer, i_M, w = 10, m = 10000, doubling = True)
+        if self.mediator_type == 'continuous':
+            med_mcmc.use_step_method(pm.Slicer, tau_M, w = 10, m = 10000, doubling = True)
+
         # Run multiple chains if specified
         for i in xrange(self.parameters['n_chains']):
             med_mcmc.sample(iter = self.parameters['iter'], 
@@ -506,6 +512,15 @@ class MediationModel(object):
         # Build MCMC endogenous model and estimate model
         endog_model = pm.Model(endog_model)
         endog_mcmc = pm.MCMC(endog_model)
+
+        # Specify samplers for mediator model (slice sampling)
+        endog_mcmc.use_step_method(pm.Slicer, b, w = 10, m = 10000, doubling = True)
+        endog_mcmc.use_step_method(pm.Slicer, c, w = 10, m = 10000, doubling = True)
+        endog_mcmc.use_step_method(pm.Slicer, i_Y, w = 10, m = 10000, doubling = True)
+        if self.mediator_type == 'continuous':
+            endog_mcmc.use_step_method(pm.Slicer, tau_Y, w = 10, m = 10000, doubling = True)
+
+        # Run multiple chains if specified
         for i in xrange(self.parameters['n_chains']):
             endog_mcmc.sample(iter = self.parameters['iter'], 
                               burn = self.parameters['burn'], 
@@ -520,6 +535,12 @@ class MediationModel(object):
         # If plotting distribution of ab
         if self.plot:
             self.ab_estimates = a_path*b_path
+
+        # Save mcmc models if specified
+        if 'save_models' in self.parameters:    # Check if key exists rather than throw error if omitted
+            if self.parameters['save_models']:
+                self.med_mcmc = med_mcmc
+                self.endog_mcmc = endog_mcmc
 
         # Point estimate
         if self.parameters['estimator'] == 'mean':
@@ -592,7 +613,6 @@ class MediationModel(object):
                                 start = start,
                                 progressbar = False)
             a_path = trace_M.get_values('a', burn = self.parameters['burn'], thin = self.parameters['thin'], combine = True)
-
 
         # Endogenous model: Y ~ i_Y + c*X + b*M
         with pm.Model() as endog_mcmc:
