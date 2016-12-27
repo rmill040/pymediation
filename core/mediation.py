@@ -1213,7 +1213,7 @@ class MediationModel(object):
         """
         # Error checking
         assert(self.fit_ran == True), 'Need to run .fit() method before generating histogram'
-        assert(self.plot == True and hasattr(clf, 'ab_estimates')), 'Need to specify plot == True in constructor function to enable plotting'
+        assert(self.plot == True and hasattr(self, 'ab_estimates')), 'Need to specify plot == True in constructor function to enable plotting'
         if self.method == 'delta':
             raise ValueError('Plotting not available for multivariate delta method')
         
