@@ -147,7 +147,7 @@ class MediationModel(object):
             self.alpha = alpha
 
         if plot in _valid_bool:
-			self.plot = plot
+            self.plot = plot
         else:
             raise ValueError('%s not a valid value for plot; should be a boolean argument' % plot)
 
@@ -168,7 +168,7 @@ class MediationModel(object):
         Parameters
         ----------
         parameters : dict
-        	Dictionary of parameters for different estimation methods
+            Dictionary of parameters for different estimation methods
 
         Returns
         -------
@@ -181,25 +181,25 @@ class MediationModel(object):
                 parameters['boot_samples'] = 2000
             if 'estimator' not in parameters:
                 parameters['estimator'] = 'sample'
-        	if self.method == 'bayesboot':
-    			if 'resample_size' not in parameters:
-    				parameters['resample_size'] = parameters.get('boot_samples')
+            if self.method == 'bayesboot':
+                if 'resample_size' not in parameters:
+                    parameters['resample_size'] = parameters.get('boot_samples')
 
         # Fully Bayesian methods
         elif self.method in ['bayes-norm', 'bayes-robust']:
-        	if 'iter' not in parameters:
-        		parameters['iter'] = 10000
-        	if 'burn' not in parameters:
-        		parameters['burn'] = int(parameters.get('iter')/2)
-        	if 'thin' not in parameters:
-        		parameters['thin'] = 1
-        	if 'n_chains' not in parameters:
-        		parameters['n_chains'] = 1
-        	if 'estimator' not in parameters:
-        		parameters['estimator'] = 'mean'
+            if 'iter' not in parameters:
+                parameters['iter'] = 10000
+            if 'burn' not in parameters:
+                parameters['burn'] = int(parameters.get('iter')/2)
+            if 'thin' not in parameters:
+                parameters['thin'] = 1
+            if 'n_chains' not in parameters:
+                parameters['n_chains'] = 1
+            if 'estimator' not in parameters:
+                parameters['estimator'] = 'mean'
 
         else: # Ignore parameters for delta methods
-        	pass
+            pass
 
         return parameters
 
@@ -1213,7 +1213,7 @@ class MediationModel(object):
         """
         # Error checking
         assert(self.fit_ran == True), 'Need to run .fit() method before generating histogram'
-        assert(self.plot == True and hasattr(clf, 'ab_estimates')), 'Need to specify plot == True in constructor function to enable plotting'
+        assert(self.plot == True and hasattr(self, 'ab_estimates')), 'Need to specify plot == True in constructor function to enable plotting'
         if self.method == 'delta':
             raise ValueError('Plotting not available for multivariate delta method')
         
