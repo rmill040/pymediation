@@ -1,1 +1,1 @@
-pass
+ print('install i2c')
