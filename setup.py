@@ -5,5 +5,5 @@ setup(
     version='0.1dev',
     packages=['mediation',],
     license='None',
-    long_description=open('README.txt').read(),
+    long_description=open('README.md').read(),
 )
