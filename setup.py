@@ -1,1 +1,1 @@
-print 'install i2c'
+print('install i2c')
